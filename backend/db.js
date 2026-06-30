@@ -1,25 +1,19 @@
-const sql = require('mssql');
-require('dotenv').config();
+// Sử dụng msnodesqlv8 để hỗ trợ kết nối (localdb) bằng Windows Authentication
+const sql = require('mssql/msnodesqlv8');
 
 const config = {
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    server: process.env.DB_SERVER, 
-    database: process.env.DB_DATABASE,
-    options: {
-        encrypt: true, // Thường dùng cho Azure, nhưng cứ để true hoặc false tùy config
-        trustServerCertificate: true // Rất quan trọng khi chạy localhost không có chứng chỉ SSL xịn
-    }
+    // Sử dụng connectionString để ép msnodesqlv8 dùng đúng Driver hiện có trên máy (ODBC Driver 17)
+    connectionString: 'Driver={ODBC Driver 17 for SQL Server};Server=(localdb)\\MSSQLLocalDB;Database=VibeChatDB;Trusted_Connection=yes;'
 };
 
 const poolPromise = new sql.ConnectionPool(config)
     .connect()
     .then(pool => {
-        console.log('Connected to SQL Server');
+        console.log('Connected to SQL Server (LocalDB)');
         return pool;
     })
     .catch(err => {
-        console.log('Database Connection Failed! Bad Config: ', err);
+        console.log('Database Connection Failed! Lỗi cấu hình: ', err);
         throw err;
     });
 
