@@ -32,10 +32,17 @@ async function initDb() {
                     Password NVARCHAR(255) NOT NULL,
                     FullName NVARCHAR(255) NULL,
                     DateOfBirth DATE NULL,
-                    Email NVARCHAR(255) NULL,
-                    FacebookLink NVARCHAR(255) NULL,
-                    CreatedAt DATETIME DEFAULT GETDATE()
-                )
+                    Email NVARCHAR(255) UNIQUE NULL,
+                    AvatarUrl NVARCHAR(500) NULL,
+                    Bio NVARCHAR(1000) NULL,
+                    Status NVARCHAR(50) DEFAULT 'offline',
+                    LastLogin DATETIME NULL,
+                    IsActive BIT DEFAULT 1,
+                    CreatedAt DATETIME DEFAULT GETDATE(),
+                    UpdatedAt DATETIME DEFAULT GETDATE()
+                );
+                CREATE NONCLUSTERED INDEX IX_Users_Username ON Users(Username);
+                CREATE NONCLUSTERED INDEX IX_Users_Email ON Users(Email);
             END
             ELSE
             BEGIN
@@ -48,8 +55,12 @@ async function initDb() {
                     ALTER TABLE Users ADD DateOfBirth DATE NULL;
                 IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[Users]') AND name = 'Email')
                     ALTER TABLE Users ADD Email NVARCHAR(255) NULL;
-                IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[Users]') AND name = 'FacebookLink')
-                    ALTER TABLE Users ADD FacebookLink NVARCHAR(255) NULL;
+                IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[Users]') AND name = 'AvatarUrl')
+                    ALTER TABLE Users ADD AvatarUrl NVARCHAR(500) NULL;
+                IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[Users]') AND name = 'Bio')
+                    ALTER TABLE Users ADD Bio NVARCHAR(1000) NULL;
+                IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[Users]') AND name = 'Status')
+                    ALTER TABLE Users ADD Status NVARCHAR(50) DEFAULT 'offline';
             END
         `);
         // Create Messages table
@@ -61,10 +72,17 @@ async function initDb() {
                     SenderId INT NOT NULL,
                     ReceiverId INT NOT NULL,
                     Content NVARCHAR(MAX) NOT NULL,
+                    AttachmentUrl NVARCHAR(500) NULL,
+                    IsRead BIT DEFAULT 0,
+                    ReadAt DATETIME NULL,
+                    IsDeleted BIT DEFAULT 0,
                     CreatedAt DATETIME DEFAULT GETDATE(),
-                    FOREIGN KEY (SenderId) REFERENCES Users(Id),
-                    FOREIGN KEY (ReceiverId) REFERENCES Users(Id)
-                )
+                    UpdatedAt DATETIME DEFAULT GETDATE(),
+                    CONSTRAINT FK_Messages_Sender FOREIGN KEY (SenderId) REFERENCES Users(Id) ON DELETE CASCADE,
+                    CONSTRAINT FK_Messages_Receiver FOREIGN KEY (ReceiverId) REFERENCES Users(Id) ON DELETE NO ACTION
+                );
+                CREATE NONCLUSTERED INDEX IX_Messages_SenderReceiver ON Messages(SenderId, ReceiverId);
+                CREATE NONCLUSTERED INDEX IX_Messages_CreatedAt ON Messages(CreatedAt);
             END
             ELSE
             BEGIN
@@ -73,6 +91,10 @@ async function initDb() {
                     ALTER TABLE Messages ADD ReceiverId INT NULL;
                     ALTER TABLE Messages ADD CONSTRAINT FK_Messages_Receiver FOREIGN KEY (ReceiverId) REFERENCES Users(Id);
                 END
+                IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[Messages]') AND name = 'AttachmentUrl')
+                    ALTER TABLE Messages ADD AttachmentUrl NVARCHAR(500) NULL;
+                IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[Messages]') AND name = 'IsRead')
+                    ALTER TABLE Messages ADD IsRead BIT DEFAULT 0;
             END
         `);
         
@@ -86,9 +108,14 @@ async function initDb() {
                     AddresseeId INT NOT NULL,
                     Status NVARCHAR(50) DEFAULT 'pending',
                     CreatedAt DATETIME DEFAULT GETDATE(),
+                    UpdatedAt DATETIME DEFAULT GETDATE(),
                     CONSTRAINT FK_Friendships_Requester FOREIGN KEY (RequesterId) REFERENCES Users(Id) ON DELETE CASCADE,
-                    CONSTRAINT FK_Friendships_Addressee FOREIGN KEY (AddresseeId) REFERENCES Users(Id) ON DELETE NO ACTION
-                )
+                    CONSTRAINT FK_Friendships_Addressee FOREIGN KEY (AddresseeId) REFERENCES Users(Id) ON DELETE NO ACTION,
+                    CONSTRAINT UQ_Friendships_Requester_Addressee UNIQUE (RequesterId, AddresseeId),
+                    CONSTRAINT CHK_Friendships_Status CHECK (Status IN ('pending', 'accepted', 'blocked', 'declined'))
+                );
+                CREATE NONCLUSTERED INDEX IX_Friendships_Requester ON Friendships(RequesterId);
+                CREATE NONCLUSTERED INDEX IX_Friendships_Addressee ON Friendships(AddresseeId);
             END
         `);
         
@@ -101,7 +128,7 @@ initDb();
 
 // Routes
 app.post('/api/register', async (req, res) => {
-    const { username, password, fullName, dateOfBirth, email, facebookLink } = req.body;
+    const { username, password, fullName, dateOfBirth, email } = req.body;
     if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
     
     try {
@@ -125,11 +152,10 @@ app.post('/api/register', async (req, res) => {
             .input('fullName', sql.NVarChar, fullName || null)
             .input('dateOfBirth', sql.Date, dateOfBirth || null)
             .input('email', sql.NVarChar, email || null)
-            .input('facebookLink', sql.NVarChar, facebookLink || null)
             .query(`
-                INSERT INTO Users (Username, Password, FullName, DateOfBirth, Email, FacebookLink) 
-                OUTPUT INSERTED.Id, INSERTED.Username, INSERTED.FullName, INSERTED.DateOfBirth, INSERTED.Email, INSERTED.FacebookLink, INSERTED.CreatedAt 
-                VALUES (@username, @password, @fullName, @dateOfBirth, @email, @facebookLink)
+                INSERT INTO Users (Username, Password, FullName, DateOfBirth, Email) 
+                OUTPUT INSERTED.Id, INSERTED.Username, INSERTED.FullName, INSERTED.DateOfBirth, INSERTED.Email, INSERTED.CreatedAt 
+                VALUES (@username, @password, @fullName, @dateOfBirth, @email)
             `);
             
         res.json({ user: insertResult.recordset[0] });

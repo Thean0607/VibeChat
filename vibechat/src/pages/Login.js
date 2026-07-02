@@ -5,10 +5,24 @@ import { socket } from '../socket';
 import { LogIn, UserPlus, MessageCircle, Mail } from 'lucide-react';
 import './Login.css';
 
+const FacebookIcon = ({ size = 24, color = "currentColor" }) => (
+    <svg 
+        xmlns="http://www.w3.org/2000/svg" 
+        width={size} 
+        height={size} 
+        viewBox="0 0 24 24" 
+        fill={color} 
+        stroke="none"
+    >
+        <path d="M9 8h-3v4h3v12h5v-12h3.642l.358-4h-4v-1.667c0-.955.192-1.333 1.115-1.333h2.885v-5h-3.808c-3.596 0-5.192 1.583-5.192 4.615v3.385z"/>
+    </svg>
+);
+
+
 const Login = ({ setUser }) => {
     const [isLogin, setIsLogin] = useState(true);
-    const [username, setUsername] = useState('');
-    const [password, setPassword] = useState('');
+    const [username, setUsername] = useState('demo');
+    const [password, setPassword] = useState('123');
     const [isSocialReg, setIsSocialReg] = useState(false);
     const [linkingProvider, setLinkingProvider] = useState(null);
     
@@ -16,7 +30,6 @@ const Login = ({ setUser }) => {
     const [fullName, setFullName] = useState('');
     const [dateOfBirth, setDateOfBirth] = useState('');
     const [email, setEmail] = useState('');
-    const [facebookLink, setFacebookLink] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
     const [acceptTerms, setAcceptTerms] = useState(false);
     
@@ -64,7 +77,7 @@ const Login = ({ setUser }) => {
             const endpoint = isLogin ? '/api/login' : '/api/register';
             const payload = isLogin 
                 ? { username, password }
-                : { username, password, fullName, dateOfBirth, email, facebookLink };
+                : { username, password, fullName, dateOfBirth, email };
                 
             const response = await axios.post(`http://localhost:5000${endpoint}`, payload);
             
@@ -140,17 +153,6 @@ const Login = ({ setUser }) => {
                                             placeholder="john@example.com"
                                             value={email}
                                             onChange={(e) => setEmail(e.target.value)}
-                                            disabled={loading}
-                                        />
-                                    </div>
-                                    <div className="input-group">
-                                        <label>Facebook Link (Optional)</label>
-                                        <input
-                                            type="text"
-                                            className="input-field"
-                                            placeholder="https://facebook.com/username"
-                                            value={facebookLink}
-                                            onChange={(e) => setFacebookLink(e.target.value)}
                                             disabled={loading}
                                         />
                                     </div>
@@ -237,16 +239,18 @@ const Login = ({ setUser }) => {
                                             className="btn-social btn-facebook"
                                             onClick={() => handleSocialClick('Facebook')}
                                             disabled={linkingProvider !== null}
+                                            title="Continue with Facebook"
                                         >
-                                            {linkingProvider === 'Facebook' ? 'Connecting...' : 'Continue with Facebook'}
+                                            <FacebookIcon size={24} />
                                         </button>
                                         <button 
                                             type="button" 
                                             className="btn-social btn-google"
                                             onClick={() => handleSocialClick('Google')}
                                             disabled={linkingProvider !== null}
+                                            title="Continue with Google"
                                         >
-                                            <Mail size={18} /> {linkingProvider === 'Google' ? 'Connecting...' : 'Continue with Google'}
+                                            <Mail size={24} />
                                         </button>
                                     </div>
                                 </div>
