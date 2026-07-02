@@ -1,15 +1,27 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
 :root {
+  --bg-color: #e5e7eb; /* Light grey background */
+  --glass-bg: rgba(255, 255, 255, 0.9);
+  --glass-border: rgba(0, 0, 0, 0.05);
+  --primary-color: #6366f1; /* Soft indigo/blue */
+  --primary-hover: #4f46e5;
+  --text-primary: #1e293b; /* Slate 800 */
+  --text-secondary: #94a3b8; /* Slate 400 */
+  --message-mine: #6366f1;
+  --message-other: #ffffff;
+}
+
+.dark-theme {
   --bg-color: #0f172a; /* Slate 900 */
   --glass-bg: rgba(30, 41, 59, 0.7); /* Slate 800 with opacity */
-  --glass-border: rgba(255, 255, 255, 0.1);
+  --glass-border: rgba(255, 255, 255, 0.05);
   --primary-color: #3b82f6; /* Blue 500 */
-  --primary-hover: #2563eb; /* Blue 600 */
+  --primary-hover: #2563eb;
   --text-primary: #f8fafc; /* Slate 50 */
   --text-secondary: #94a3b8; /* Slate 400 */
   --message-mine: #3b82f6;
-  --message-other: rgba(30, 41, 59, 0.9);
+  --message-other: rgba(255, 255, 255, 0.1);
 }
 
 * {
@@ -26,10 +38,6 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   background-color: var(--bg-color);
-  background-image: 
-    radial-gradient(at 0% 0%, hsla(253,16%,7%,1) 0, transparent 50%), 
-    radial-gradient(at 50% 0%, hsla(225,39%,30%,0.2) 0, transparent 50%), 
-    radial-gradient(at 100% 0%, hsla(339,49%,30%,0.2) 0, transparent 50%);
   color: var(--text-primary);
   min-height: 100vh;
   display: flex;
@@ -37,8 +45,7 @@ body {
 }
 
 code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
-    monospace;
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
 }
 
 .app-container {
@@ -46,7 +53,7 @@ code {
   justify-content: center;
   align-items: center;
   min-height: 100vh;
-  padding: 20px;
+  padding: 40px;
 }
 
 /* Glassmorphism Utilities */
@@ -56,7 +63,7 @@ code {
   -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--glass-border);
   border-radius: 20px;
-  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.05);
 }
 
 /* Buttons */
@@ -79,14 +86,14 @@ code {
 .btn-primary:hover {
   background-color: var(--primary-hover);
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
 }
 
 /* Inputs */
 .input-field {
   width: 100%;
-  background: rgba(15, 23, 42, 0.6);
-  border: 1px solid var(--glass-border);
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
   color: var(--text-primary);
   padding: 14px 16px;
   border-radius: 12px;
@@ -97,7 +104,7 @@ code {
 
 .input-field:focus {
   border-color: var(--primary-color);
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
 }
 
 .input-field::placeholder {
@@ -112,9 +119,9 @@ code {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(0, 0, 0, 0.1);
   border-radius: 4px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(0, 0, 0, 0.2);
 }

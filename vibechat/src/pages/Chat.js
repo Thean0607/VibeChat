@@ -1,8 +1,12 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { socket } from '../socket';
-import { Send, LogOut, User as UserIcon, MessageSquare, Users, Settings, UserCircle, Search, UserPlus, Check, Clock, Edit2, Mail } from 'lucide-react';
+import { 
+    LogOut, User as UserIcon, MessageSquare, Users, 
+    Settings, Search, 
+    Home, Video, Menu, CheckCheck, Phone, Paperclip, Folder, Smile, Bold, Code, List
+} from 'lucide-react';
 import './Chat.css';
 
 const Chat = ({ user, setUser }) => {
@@ -10,6 +14,7 @@ const Chat = ({ user, setUser }) => {
     const [friendsList, setFriendsList] = useState([]);
     const [searchResults, setSearchResults] = useState([]);
     const [searchQuery, setSearchQuery] = useState('');
+    const [isDarkMode, setIsDarkMode] = useState(false);
     
     const [selectedFriend, setSelectedFriend] = useState(null);
     const [messages, setMessages] = useState([]);
@@ -17,8 +22,16 @@ const Chat = ({ user, setUser }) => {
     const messagesEndRef = useRef(null);
     const navigate = useNavigate();
 
+    useEffect(() => {
+        if (isDarkMode) {
+            document.body.classList.add('dark-theme');
+        } else {
+            document.body.classList.remove('dark-theme');
+        }
+    }, [isDarkMode]);
+
     // Fetch friendships
-    const fetchFriends = async () => {
+    const fetchFriends = useCallback(async () => {
         if (!user) return;
         try {
             const response = await axios.get(`http://localhost:5000/api/friends/${user.Id}`);
@@ -26,7 +39,7 @@ const Chat = ({ user, setUser }) => {
         } catch (err) {
             console.error("Failed to fetch friends", err);
         }
-    };
+    }, [user]);
 
     useEffect(() => {
         if (!user) {
@@ -34,7 +47,7 @@ const Chat = ({ user, setUser }) => {
             return;
         }
         fetchFriends();
-    }, [user, navigate]);
+    }, [user, navigate, fetchFriends]);
 
     // Handle search users
     useEffect(() => {
@@ -62,7 +75,6 @@ const Chat = ({ user, setUser }) => {
                 requesterId: user.Id,
                 addresseeId
             });
-            // refresh search results to update status
             setSearchQuery(prev => prev + ' '); 
             setSearchQuery(prev => prev.trim());
         } catch (err) {
@@ -135,31 +147,48 @@ const Chat = ({ user, setUser }) => {
 
     if (!user) return null;
 
-    // Derived state
     const activeFriends = friendsList.filter(f => f.Status === 'accepted');
     const pendingRequests = friendsList.filter(f => f.Status === 'pending' && f.AddresseeId === user.Id);
 
-    // Renderer for Middle Pane
     const renderListPane = () => {
         if (activeTab === 'chats') {
             return (
                 <>
-                    <div className="pane-header">
-                        <h2>Chats</h2>
+                    <div className="chat-list-header">
+                        <h2>Chat List</h2>
+                        <div className="search-bar">
+                            <Search size={18} className="search-icon" color="var(--text-secondary)" />
+                            <input type="text" placeholder="Search" />
+                        </div>
+                        <div className="filter-dropdown">
+                            <span>All Chats</span>
+                            <Menu size={16} />
+                        </div>
                     </div>
-                    <div className="pane-content">
+                    <div className="chat-items">
                         {activeFriends.length === 0 ? (
-                            <div className="empty-list">No friends yet. Go to People to add some!</div>
+                            <div style={{color: 'var(--text-secondary)', padding: '16px'}}>No chats yet. Go to People to add some!</div>
                         ) : (
                             activeFriends.map(friend => (
                                 <div 
                                     key={friend.Id} 
-                                    className={`list-item ${selectedFriend?.Id === friend.Id ? 'active' : ''}`}
+                                    className={`chat-item ${selectedFriend?.Id === friend.Id ? 'active' : ''}`}
                                     onClick={() => setSelectedFriend(friend)}
                                 >
-                                    <div className="avatar"><UserIcon size={20} /></div>
-                                    <div className="item-info">
-                                        <span className="item-name">{friend.FullName || friend.Username}</span>
+                                    <div style={{position: 'relative'}}>
+                                        <div className="chat-avatar" style={{background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white'}}>
+                                            <UserIcon size={24} />
+                                        </div>
+                                        <div className="chat-status-dot"></div>
+                                    </div>
+                                    <div className="chat-item-info">
+                                        <div className="chat-item-top">
+                                            <span className="chat-item-name">{friend.FullName || friend.Username}</span>
+                                            <span className="chat-item-time">1:00 PM</span>
+                                        </div>
+                                        <div className="chat-item-snippet">
+                                            Click to view messages
+                                        </div>
                                     </div>
                                 </div>
                             ))
@@ -172,12 +201,10 @@ const Chat = ({ user, setUser }) => {
         if (activeTab === 'people') {
             return (
                 <>
-                    <div className="pane-header">
+                    <div className="chat-list-header">
                         <h2>People</h2>
-                    </div>
-                    <div className="pane-content">
-                        <div className="search-box">
-                            <Search size={16} className="search-icon" />
+                        <div className="search-bar">
+                            <Search size={18} className="search-icon" color="var(--text-secondary)" />
                             <input 
                                 type="text" 
                                 placeholder="Search users..." 
@@ -185,42 +212,47 @@ const Chat = ({ user, setUser }) => {
                                 onChange={e => setSearchQuery(e.target.value)}
                             />
                         </div>
-
+                    </div>
+                    <div className="chat-items">
                         {pendingRequests.length > 0 && (
-                            <div className="section-block">
-                                <h3>Friend Requests</h3>
+                            <div style={{marginBottom: '16px'}}>
+                                <h3 style={{fontSize: '12px', color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: '8px'}}>Requests</h3>
                                 {pendingRequests.map(req => (
-                                    <div key={req.Id} className="list-item request-item">
-                                        <div className="avatar"><UserIcon size={18} /></div>
-                                        <div className="item-info">
-                                            <span className="item-name">{req.FullName || req.Username}</span>
+                                    <div key={req.Id} className="chat-item">
+                                        <div className="chat-avatar" style={{background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white'}}>
+                                            <UserIcon size={24} />
                                         </div>
-                                        <button className="btn-icon accept" onClick={() => acceptFriendRequest(req.RequesterId)}>
-                                            <Check size={16} />
+                                        <div className="chat-item-info">
+                                            <span className="chat-item-name">{req.FullName || req.Username}</span>
+                                        </div>
+                                        <button onClick={() => acceptFriendRequest(req.RequesterId)} style={{background: 'var(--primary-color)', color: 'white', border: 'none', borderRadius: '8px', padding: '6px 12px', cursor: 'pointer'}}>
+                                            Accept
                                         </button>
                                     </div>
                                 ))}
                             </div>
                         )}
 
-                        <div className="section-block">
-                            {searchQuery ? <h3>Search Results</h3> : <h3>Suggested</h3>}
+                        <div>
+                            <h3 style={{fontSize: '12px', color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: '8px'}}>{searchQuery ? 'Results' : 'Suggested'}</h3>
                             {searchResults.length === 0 && searchQuery ? (
-                                <div className="empty-list">No users found</div>
+                                <div style={{color: 'var(--text-secondary)', padding: '8px'}}>No users found</div>
                             ) : (
                                 searchResults.map(su => (
-                                    <div key={su.Id} className="list-item">
-                                        <div className="avatar"><UserIcon size={18} /></div>
-                                        <div className="item-info">
-                                            <span className="item-name">{su.FullName || su.Username}</span>
+                                    <div key={su.Id} className="chat-item">
+                                        <div className="chat-avatar" style={{background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white'}}>
+                                            <UserIcon size={24} />
+                                        </div>
+                                        <div className="chat-item-info">
+                                            <span className="chat-item-name">{su.FullName || su.Username}</span>
                                         </div>
                                         {su.Status === 'accepted' ? (
-                                            <span className="status-badge friend">Friend</span>
+                                            <span style={{fontSize: '12px', color: 'var(--primary-color)'}}>Friend</span>
                                         ) : su.Status === 'pending' ? (
-                                            <span className="status-badge pending">Pending</span>
+                                            <span style={{fontSize: '12px', color: 'var(--text-secondary)'}}>Pending</span>
                                         ) : (
-                                            <button className="btn-icon add" onClick={() => sendFriendRequest(su.Id)}>
-                                                <UserPlus size={16} />
+                                            <button onClick={() => sendFriendRequest(su.Id)} style={{background: 'rgba(255,255,255,0.1)', border: '1px solid var(--glass-border)', borderRadius: '8px', padding: '6px 12px', cursor: 'pointer', color: 'var(--text-primary)'}}>
+                                                Add
                                             </button>
                                         )}
                                     </div>
@@ -232,152 +264,239 @@ const Chat = ({ user, setUser }) => {
             );
         }
 
-        if (activeTab === 'profile') {
+        if (activeTab === 'settings') {
             return (
                 <>
-                    <div className="pane-header">
-                        <h2>Profile</h2>
+                    <div className="chat-list-header">
+                        <h2>Settings</h2>
                     </div>
-                    <div className="pane-content profile-content">
-                        <div className="profile-avatar-large">
-                            <UserIcon size={64} />
+                    <div className="chat-items" style={{padding: '0 8px'}}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px', background: 'rgba(255,255,255,0.05)', borderRadius: '12px', color: 'var(--text-primary)' }}>
+                            <span style={{fontWeight: '500'}}>Dark Mode</span>
+                            <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                                <input 
+                                    type="checkbox" 
+                                    checked={isDarkMode} 
+                                    onChange={(e) => setIsDarkMode(e.target.checked)} 
+                                    style={{ width: '18px', height: '18px', marginRight: '8px', cursor: 'pointer' }} 
+                                />
+                                <span style={{fontSize: '14px', color: 'var(--text-secondary)'}}>{isDarkMode ? 'On' : 'Off'}</span>
+                            </label>
                         </div>
-                        <h2 className="profile-name">{user.FullName || user.Username}</h2>
-                        <p className="profile-username">@{user.Username}</p>
-                        
-                        <div className="profile-details">
-                            <div className="detail-row">
-                                <label>Email</label>
-                                <span>{user.Email || 'Not provided'}</span>
-                            </div>
-                            <div className="detail-row">
-                                <label>Birthday</label>
-                                <span>{user.DateOfBirth ? new Date(user.DateOfBirth).toLocaleDateString() : 'Not provided'}</span>
-                            </div>
-                        </div>
-                        <button className="btn-secondary w-100 mt-20"><Edit2 size={16} style={{marginRight: '8px'}} /> Edit Profile</button>
+                        <button className="btn-primary" style={{width: '100%', backgroundColor: '#ef4444', marginTop: '16px', color: 'white', border: 'none', padding: '12px', borderRadius: '12px', cursor: 'pointer', fontWeight: 'bold'}} onClick={handleLogout}>Log Out</button>
                     </div>
                 </>
             );
         }
 
-        if (activeTab === 'settings') {
+        if (activeTab === 'home') {
             return (
                 <>
-                    <div className="pane-header">
-                        <h2>Settings</h2>
+                    <div className="chat-list-header">
+                        <h2>Home</h2>
                     </div>
-                    <div className="pane-content settings-content">
-                        <div className="setting-item">
-                            <div className="setting-info">
-                                <h4>Dark Mode</h4>
-                                <p>Toggle dark appearance</p>
-                            </div>
-                            <label className="switch">
-                                <input type="checkbox" defaultChecked />
-                                <span className="slider round"></span>
-                            </label>
-                        </div>
-                        <div className="setting-item">
-                            <div className="setting-info">
-                                <h4>Notifications</h4>
-                                <p>Enable sound and alerts</p>
-                            </div>
-                            <label className="switch">
-                                <input type="checkbox" defaultChecked />
-                                <span className="slider round"></span>
-                            </label>
-                        </div>
+                    <div className="chat-items" style={{padding: '16px', color: 'var(--text-secondary)'}}>
+                        <p>Welcome to VibeChat!</p>
+                        <p style={{marginTop: '8px'}}>Select Chats to start messaging, or People to find friends.</p>
                     </div>
                 </>
             );
         }
+
+        return null;
     };
 
     return (
         <div className="app-container">
             <div className="main-layout">
-                {/* 1. NAV BAR */}
-                <nav className="nav-bar">
-                    <div className="nav-top">
-                        <div className="nav-logo">VC</div>
+                {/* COLUMN 1: SIDEBAR NAV */}
+                <nav className="sidebar-nav">
+                    <div className="nav-avatar" style={{background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white'}}>
+                        <UserIcon size={24} />
+                        <div className="nav-status-dot"></div>
+                    </div>
+                    <div className="nav-items">
+                        <button className={`nav-item ${activeTab === 'home' ? 'active' : ''}`} onClick={() => setActiveTab('home')} title="Home">
+                            <Home size={24} />
+                        </button>
                         <button className={`nav-item ${activeTab === 'chats' ? 'active' : ''}`} onClick={() => setActiveTab('chats')} title="Chats">
                             <MessageSquare size={24} />
                         </button>
                         <button className={`nav-item ${activeTab === 'people' ? 'active' : ''}`} onClick={() => setActiveTab('people')} title="People">
-                            <div className="icon-wrapper">
-                                <Users size={24} />
-                                {pendingRequests.length > 0 && <span className="badge">{pendingRequests.length}</span>}
-                            </div>
+                            <Users size={24} />
                         </button>
                     </div>
                     <div className="nav-bottom">
-                        <button className={`nav-item ${activeTab === 'profile' ? 'active' : ''}`} onClick={() => setActiveTab('profile')} title="Profile">
-                            <UserCircle size={24} />
-                        </button>
                         <button className={`nav-item ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => setActiveTab('settings')} title="Settings">
                             <Settings size={24} />
                         </button>
-                        <button className="nav-item logout" onClick={handleLogout} title="Logout">
+                        <button className="nav-item" onClick={handleLogout} title="Help">
                             <LogOut size={24} />
                         </button>
                     </div>
                 </nav>
 
-                {/* 2. LIST PANE */}
-                <aside className="list-pane">
+                {/* COLUMN 2: CHAT LIST */}
+                <aside className="chat-list-pane">
                     {renderListPane()}
                 </aside>
 
-                {/* 3. CONTENT PANE */}
-                <main className="content-pane">
+                {/* COLUMN 3: MAIN CHAT */}
+                <main className="main-chat-pane">
                     {activeTab === 'chats' && selectedFriend ? (
                         <>
-                            <header className="content-header">
-                                <div className="user-info">
-                                    <div className="avatar"><UserIcon size={24} /></div>
-                                    <span className="username">{selectedFriend.FullName || selectedFriend.Username}</span>
+                            <header className="main-chat-header">
+                                <div className="header-user-info">
+                                    <div className="chat-avatar" style={{background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white'}}>
+                                        <UserIcon size={24} />
+                                    </div>
+                                    <div className="header-user-text">
+                                        <h3>{selectedFriend.FullName || selectedFriend.Username}</h3>
+                                        <div className="header-user-status">
+                                            <div className="chat-status-dot"></div> Online - Typing...
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="header-actions">
+                                    <Video size={20} />
+                                    <Phone size={20} />
+                                    <Settings size={20} />
                                 </div>
                             </header>
 
-                            <div className="chat-messages">
-                                {messages.map((msg, index) => {
-                                    const isMine = msg.SenderId === user.Id;
-                                    return (
-                                        <div key={msg.Id || index} className={`message-wrapper ${isMine ? 'mine' : 'other'}`}>
-                                            <div className="message-bubble">
-                                                {msg.Content}
+                            <div className="messages-area">
+                                {messages.length === 0 ? (
+                                    <div style={{height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)'}}>
+                                        <p>No messages yet. Say hi!</p>
+                                    </div>
+                                ) : (
+                                    messages.map((msg, index) => {
+                                        const isMine = msg.SenderId === user.Id;
+                                        return (
+                                            <div key={msg.Id || index} className={`message-wrapper ${isMine ? 'mine' : 'other'}`}>
+                                                <div className="message-meta" style={{flexDirection: isMine ? 'row-reverse' : 'row'}}>
+                                                    <div className="chat-avatar" style={{width: '24px', height: '24px', background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', margin: 0}}>
+                                                        <UserIcon size={12} />
+                                                    </div>
+                                                    <span>{isMine ? 'You' : (selectedFriend.FullName || selectedFriend.Username)}</span>
+                                                    <span style={{fontSize: '11px'}}>{new Date(msg.CreatedAt || Date.now()).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                                                </div>
+                                                <div className="message-bubble">
+                                                    {msg.Content}
+                                                </div>
+                                                {isMine && (
+                                                    <div className="message-status">
+                                                        <CheckCheck size={14} /> Read
+                                                    </div>
+                                                )}
                                             </div>
-                                        </div>
-                                    );
-                                })}
+                                        );
+                                    })
+                                )}
                                 <div ref={messagesEndRef} />
                             </div>
 
-                            <form className="chat-input-area" onSubmit={handleSendMessage}>
-                                <input
-                                    type="text"
-                                    className="input-field message-input"
-                                    placeholder={`Message ${selectedFriend.FullName || selectedFriend.Username}...`}
-                                    value={newMessage}
-                                    onChange={(e) => setNewMessage(e.target.value)}
-                                />
-                                <button type="submit" className="btn-primary send-btn" disabled={!newMessage.trim()}>
-                                    <Send size={18} />
-                                </button>
-                            </form>
+                            <div className="input-area-container">
+                                <form className="input-box" onSubmit={handleSendMessage}>
+                                    <div className="input-toolbar">
+                                        <Bold size={18} />
+                                        <Code size={18} />
+                                        <List size={18} />
+                                    </div>
+                                    <div className="input-main">
+                                        <Smile size={20} style={{color: 'var(--text-secondary)', marginRight: '12px'}} />
+                                        <input
+                                            type="text"
+                                            placeholder="Type a message..."
+                                            value={newMessage}
+                                            onChange={(e) => setNewMessage(e.target.value)}
+                                        />
+                                        <div className="input-actions">
+                                            <Paperclip size={20} />
+                                            <Folder size={20} />
+                                            <button type="submit" className="btn-send" disabled={!newMessage.trim()}>
+                                                <span style={{fontWeight: 'bold', fontSize: '14px'}}>Send</span>
+                                            </button>
+                                        </div>
+                                    </div>
+                                </form>
+                            </div>
                         </>
                     ) : (
-                        <div className="empty-state">
-                            <div className="empty-icon-wrapper">
-                                <MessageSquare size={64} className="empty-icon" />
-                            </div>
-                            <h3>{activeTab === 'chats' ? 'Select a conversation' : 'VibeChat'}</h3>
-                            <p>{activeTab === 'chats' ? 'Choose a friend from the list to start chatting.' : 'Connect and vibe with your friends seamlessly.'}</p>
+                        <div style={{height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)'}}>
+                            {activeTab === 'home' ? (
+                                <>
+                                    <Home size={64} style={{marginBottom: '16px', opacity: 0.5}} />
+                                    <h2>Welcome Home</h2>
+                                    <p>Your dashboard is empty right now.</p>
+                                </>
+                            ) : (
+                                <>
+                                    <MessageSquare size={64} style={{marginBottom: '16px', opacity: 0.5}} />
+                                    <h2>Select a chat</h2>
+                                    <p>Choose a friend from the left panel to start messaging.</p>
+                                </>
+                            )}
                         </div>
                     )}
                 </main>
 
+                {/* COLUMN 4: WIDGETS PANE */}
+                <aside className="widgets-pane">
+                    <div className="widget-section">
+                        <div className="widget-header">
+                            <span>Calendar</span>
+                            <Settings size={16} />
+                        </div>
+                        <div className="calendar-widget">
+                            <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '16px', color: 'var(--text-primary)', fontWeight: 'bold'}}>
+                                <span>&lt;</span>
+                                <span>Jul 2026</span>
+                                <span>&gt;</span>
+                            </div>
+                            <div className="calendar-grid">
+                                <div className="calendar-day-header">Su</div>
+                                <div className="calendar-day-header">Mo</div>
+                                <div className="calendar-day-header">Tu</div>
+                                <div className="calendar-day-header">We</div>
+                                <div className="calendar-day-header">Th</div>
+                                <div className="calendar-day-header">Fr</div>
+                                <div className="calendar-day-header">Sa</div>
+                                {[...Array(31)].map((_, i) => (
+                                    <div key={i} className={`calendar-day ${i + 1 === 1 ? 'active' : ''}`}>{i + 1}</div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="tasks-widget">
+                        <div className="widget-header">
+                            <span>Team Tasks</span>
+                            <Menu size={16} />
+                        </div>
+                        <div className="task-item">
+                            <div className="task-checkbox"></div>
+                            <div className="task-content">
+                                <h4>Update Component</h4>
+                                <p>10 min ago</p>
+                            </div>
+                        </div>
+                        <div className="task-item completed">
+                            <div className="task-checkbox" style={{background: 'var(--primary-color)', borderColor: 'var(--primary-color)'}}></div>
+                            <div className="task-content">
+                                <h4>Team Sync</h4>
+                                <p>1 hour ago</p>
+                            </div>
+                        </div>
+                        <div className="task-item">
+                            <div className="task-checkbox"></div>
+                            <div className="task-content">
+                                <h4>Review PRs</h4>
+                                <p>2 hours ago</p>
+                            </div>
+                        </div>
+                    </div>
+                </aside>
             </div>
         </div>
     );
