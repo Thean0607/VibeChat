@@ -79,7 +79,7 @@ const Login = ({ setUser }) => {
                 ? { username, password }
                 : { username, password, fullName, dateOfBirth, email };
                 
-            const response = await axios.post(`http://localhost:5000${endpoint}`, payload);
+            const response = await axios.post(`http://${window.location.hostname}:5000${endpoint}`, payload);
             
             const loggedInUser = response.data.user;
             setUser(loggedInUser);

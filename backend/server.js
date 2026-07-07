@@ -13,7 +13,7 @@ app.use(express.json());
 const server = http.createServer(app);
 const io = new Server(server, {
     cors: {
-        origin: ["http://localhost:3000", "http://localhost:3001", "http://localhost:3002"],
+        origin: "*",
         methods: ["GET", "POST"]
     }
 });
@@ -241,7 +241,9 @@ app.get('/api/messages', async (req, res) => {
 
 // Friendship Routes
 app.get('/api/users/search', async (req, res) => {
-    const { q, currentUserId } = req.query;
+    const { q } = req.query;
+    const currentUserId = parseInt(req.query.currentUserId, 10);
+    console.log(`[SEARCH] q=${q}, currentUserId=${currentUserId}`);
     try {
         const pool = await poolPromise;
         const result = await pool.request()
@@ -257,9 +259,10 @@ app.get('/api/users/search', async (req, res) => {
                 WHERE u.Id != @currentUserId 
                   AND (u.Username LIKE @q OR u.FullName LIKE @q)
             `);
+        console.log(`[SEARCH] Found ${result.recordset.length} users`);
         res.json(result.recordset);
     } catch (err) {
-        console.error(err);
+        console.error('[SEARCH ERROR]', err);
         res.status(500).json({ error: 'Server error' });
     }
 });

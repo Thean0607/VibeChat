@@ -2,11 +2,11 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { socket } from '../socket';
-import { 
-    LogOut, User as UserIcon, MessageSquare, Users, 
+import { LogOut, User as UserIcon, MessageSquare, Users, 
     Settings, Search, 
     Home, Video, Menu, CheckCheck, Phone, Paperclip, Folder, Smile, Bold, Code, List
 } from 'lucide-react';
+import { generateSharedKey, encryptMessage, decryptMessage } from '../utils/encryption';
 import './Chat.css';
 
 const Chat = ({ user, setUser }) => {
@@ -16,11 +16,17 @@ const Chat = ({ user, setUser }) => {
     const [searchQuery, setSearchQuery] = useState('');
     const [isDarkMode, setIsDarkMode] = useState(false);
     
+    const [selectedProfile, setSelectedProfile] = useState(null);
     const [selectedFriend, setSelectedFriend] = useState(null);
     const [messages, setMessages] = useState([]);
     const [newMessage, setNewMessage] = useState('');
     const messagesEndRef = useRef(null);
     const navigate = useNavigate();
+
+    const handleTabChange = (tab) => {
+        setActiveTab(tab);
+        setSelectedProfile(null);
+    };
 
     useEffect(() => {
         if (isDarkMode) {
@@ -34,7 +40,7 @@ const Chat = ({ user, setUser }) => {
     const fetchFriends = useCallback(async () => {
         if (!user) return;
         try {
-            const response = await axios.get(`http://localhost:5000/api/friends/${user.Id}`);
+            const response = await axios.get(`http://${window.location.hostname}:5000/api/friends/${user.Id}`);
             setFriendsList(response.data);
         } catch (err) {
             console.error("Failed to fetch friends", err);
@@ -55,7 +61,7 @@ const Chat = ({ user, setUser }) => {
             const delayDebounceFn = setTimeout(async () => {
                 if (searchQuery.trim().length > 0) {
                     try {
-                        const response = await axios.get(`http://localhost:5000/api/users/search?q=${searchQuery}&currentUserId=${user.Id}`);
+                        const response = await axios.get(`http://${window.location.hostname}:5000/api/users/search?q=${searchQuery}&currentUserId=${user.Id}`);
                         setSearchResults(response.data);
                     } catch (err) {
                         console.error(err);
@@ -71,7 +77,7 @@ const Chat = ({ user, setUser }) => {
     // Friend actions
     const sendFriendRequest = async (addresseeId) => {
         try {
-            await axios.post('http://localhost:5000/api/friends/request', {
+            await axios.post(`http://${window.location.hostname}:5000/api/friends/request`, {
                 requesterId: user.Id,
                 addresseeId
             });
@@ -84,7 +90,7 @@ const Chat = ({ user, setUser }) => {
 
     const acceptFriendRequest = async (requesterId) => {
         try {
-            await axios.post('http://localhost:5000/api/friends/accept', {
+            await axios.post(`http://${window.location.hostname}:5000/api/friends/accept`, {
                 requesterId,
                 addresseeId: user.Id
             });
@@ -99,8 +105,15 @@ const Chat = ({ user, setUser }) => {
         if (!selectedFriend || !user) return;
         const fetchMessages = async () => {
             try {
-                const response = await axios.get(`http://localhost:5000/api/messages?user1=${user.Id}&user2=${selectedFriend.Id}`);
-                setMessages(response.data);
+                const response = await axios.get(`http://${window.location.hostname}:5000/api/messages?user1=${user.Id}&user2=${selectedFriend.Id}`);
+                
+                const sharedKey = generateSharedKey(user.Id, selectedFriend.Id);
+                const decryptedMessages = response.data.map(msg => ({
+                    ...msg,
+                    Content: decryptMessage(msg.Content, sharedKey)
+                }));
+                
+                setMessages(decryptedMessages);
             } catch (err) {
                 console.error("Failed to fetch messages", err);
             }
@@ -116,7 +129,12 @@ const Chat = ({ user, setUser }) => {
                 ((message.SenderId === user.Id && message.ReceiverId === selectedFriend.Id) || 
                  (message.SenderId === selectedFriend.Id && message.ReceiverId === user.Id))
             ) {
-                setMessages(prev => [...prev, message]);
+                const sharedKey = generateSharedKey(user.Id, selectedFriend.Id);
+                const decryptedMsg = {
+                    ...message,
+                    Content: decryptMessage(message.Content, sharedKey)
+                };
+                setMessages(prev => [...prev, decryptedMsg]);
             }
         };
         socket.on('receiveMessage', handleReceiveMessage);
@@ -130,10 +148,14 @@ const Chat = ({ user, setUser }) => {
     const handleSendMessage = (e) => {
         e.preventDefault();
         if (!newMessage.trim() || !selectedFriend) return;
+        
+        const sharedKey = generateSharedKey(user.Id, selectedFriend.Id);
+        const encryptedContent = encryptMessage(newMessage, sharedKey);
+        
         socket.emit('sendMessage', {
             senderId: user.Id,
             receiverId: selectedFriend.Id,
-            content: newMessage,
+            content: encryptedContent,
             username: user.Username
         });
         setNewMessage('');
@@ -158,7 +180,7 @@ const Chat = ({ user, setUser }) => {
                         <h2>Chat List</h2>
                         <div className="search-bar">
                             <Search size={18} className="search-icon" color="var(--text-secondary)" />
-                            <input type="text" placeholder="Search" />
+                            <input key="chats-search" type="text" placeholder="Search" />
                         </div>
                         <div className="filter-dropdown">
                             <span>All Chats</span>
@@ -206,9 +228,10 @@ const Chat = ({ user, setUser }) => {
                         <div className="search-bar">
                             <Search size={18} className="search-icon" color="var(--text-secondary)" />
                             <input 
+                                key="people-search"
                                 type="text" 
                                 placeholder="Search users..." 
-                                value={searchQuery}
+                                value={searchQuery || ''}
                                 onChange={e => setSearchQuery(e.target.value)}
                             />
                         </div>
@@ -218,14 +241,14 @@ const Chat = ({ user, setUser }) => {
                             <div style={{marginBottom: '16px'}}>
                                 <h3 style={{fontSize: '12px', color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: '8px'}}>Requests</h3>
                                 {pendingRequests.map(req => (
-                                    <div key={req.Id} className="chat-item">
+                                    <div key={req.Id} className="chat-item" style={{cursor: 'pointer'}} onClick={() => setSelectedProfile(req)}>
                                         <div className="chat-avatar" style={{background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white'}}>
                                             <UserIcon size={24} />
                                         </div>
                                         <div className="chat-item-info">
                                             <span className="chat-item-name">{req.FullName || req.Username}</span>
                                         </div>
-                                        <button onClick={() => acceptFriendRequest(req.RequesterId)} style={{background: 'var(--primary-color)', color: 'white', border: 'none', borderRadius: '8px', padding: '6px 12px', cursor: 'pointer'}}>
+                                        <button onClick={(e) => { e.stopPropagation(); acceptFriendRequest(req.RequesterId); }} style={{background: 'var(--primary-color)', color: 'white', border: 'none', borderRadius: '8px', padding: '6px 12px', cursor: 'pointer'}}>
                                             Accept
                                         </button>
                                     </div>
@@ -239,7 +262,7 @@ const Chat = ({ user, setUser }) => {
                                 <div style={{color: 'var(--text-secondary)', padding: '8px'}}>No users found</div>
                             ) : (
                                 searchResults.map(su => (
-                                    <div key={su.Id} className="chat-item">
+                                    <div key={su.Id} className="chat-item" style={{cursor: 'pointer'}} onClick={() => setSelectedProfile(su)}>
                                         <div className="chat-avatar" style={{background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white'}}>
                                             <UserIcon size={24} />
                                         </div>
@@ -251,7 +274,7 @@ const Chat = ({ user, setUser }) => {
                                         ) : su.Status === 'pending' ? (
                                             <span style={{fontSize: '12px', color: 'var(--text-secondary)'}}>Pending</span>
                                         ) : (
-                                            <button onClick={() => sendFriendRequest(su.Id)} style={{background: 'rgba(255,255,255,0.1)', border: '1px solid var(--glass-border)', borderRadius: '8px', padding: '6px 12px', cursor: 'pointer', color: 'var(--text-primary)'}}>
+                                            <button onClick={(e) => { e.stopPropagation(); sendFriendRequest(su.Id); setSelectedProfile({...su, Status: 'pending'}); }} style={{background: 'rgba(255,255,255,0.1)', border: '1px solid var(--glass-border)', borderRadius: '8px', padding: '6px 12px', cursor: 'pointer', color: 'var(--text-primary)'}}>
                                                 Add
                                             </button>
                                         )}
@@ -276,7 +299,7 @@ const Chat = ({ user, setUser }) => {
                             <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
                                 <input 
                                     type="checkbox" 
-                                    checked={isDarkMode} 
+                                    checked={!!isDarkMode} 
                                     onChange={(e) => setIsDarkMode(e.target.checked)} 
                                     style={{ width: '18px', height: '18px', marginRight: '8px', cursor: 'pointer' }} 
                                 />
@@ -316,18 +339,18 @@ const Chat = ({ user, setUser }) => {
                         <div className="nav-status-dot"></div>
                     </div>
                     <div className="nav-items">
-                        <button className={`nav-item ${activeTab === 'home' ? 'active' : ''}`} onClick={() => setActiveTab('home')} title="Home">
+                        <button className={`nav-item ${activeTab === 'home' ? 'active' : ''}`} onClick={() => handleTabChange('home')} title="Home">
                             <Home size={24} />
                         </button>
-                        <button className={`nav-item ${activeTab === 'chats' ? 'active' : ''}`} onClick={() => setActiveTab('chats')} title="Chats">
+                        <button className={`nav-item ${activeTab === 'chats' ? 'active' : ''}`} onClick={() => handleTabChange('chats')} title="Chats">
                             <MessageSquare size={24} />
                         </button>
-                        <button className={`nav-item ${activeTab === 'people' ? 'active' : ''}`} onClick={() => setActiveTab('people')} title="People">
+                        <button className={`nav-item ${activeTab === 'people' ? 'active' : ''}`} onClick={() => handleTabChange('people')} title="People">
                             <Users size={24} />
                         </button>
                     </div>
                     <div className="nav-bottom">
-                        <button className={`nav-item ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => setActiveTab('settings')} title="Settings">
+                        <button className={`nav-item ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => handleTabChange('settings')} title="Settings">
                             <Settings size={24} />
                         </button>
                         <button className="nav-item" onClick={handleLogout} title="Help">
@@ -343,7 +366,53 @@ const Chat = ({ user, setUser }) => {
 
                 {/* COLUMN 3: MAIN CHAT */}
                 <main className="main-chat-pane">
-                    {activeTab === 'chats' && selectedFriend ? (
+                    {selectedProfile ? (
+                        <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--text-primary)'}}>
+                            <div style={{width: 120, height: 120, borderRadius: '50%', background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 48, marginBottom: 24}}>
+                                {selectedProfile.FullName ? selectedProfile.FullName[0].toUpperCase() : selectedProfile.Username[0].toUpperCase()}
+                            </div>
+                            <h2>{selectedProfile.FullName || selectedProfile.Username}</h2>
+                            <p style={{color: 'var(--text-secondary)', marginBottom: 8}}>@{selectedProfile.Username}</p>
+                            
+                            <div style={{background: 'rgba(255,255,255,0.05)', padding: 24, borderRadius: 16, width: '100%', maxWidth: 400, marginTop: 24}}>
+                                <div style={{marginBottom: 16}}>
+                                    <label style={{color: 'var(--text-secondary)', fontSize: 12, textTransform: 'uppercase'}}>Bio</label>
+                                    <p>{selectedProfile.Bio || 'No bio yet.'}</p>
+                                </div>
+                                {selectedProfile.Email && (
+                                    <div style={{marginBottom: 16}}>
+                                        <label style={{color: 'var(--text-secondary)', fontSize: 12, textTransform: 'uppercase'}}>Email</label>
+                                        <p>{selectedProfile.Email}</p>
+                                    </div>
+                                )}
+                                {selectedProfile.DateOfBirth && (
+                                    <div style={{marginBottom: 16}}>
+                                        <label style={{color: 'var(--text-secondary)', fontSize: 12, textTransform: 'uppercase'}}>Birthday</label>
+                                        <p>{new Date(selectedProfile.DateOfBirth).toLocaleDateString()}</p>
+                                    </div>
+                                )}
+                                
+                                <div style={{marginTop: 32, display: 'flex', justifyContent: 'center'}}>
+                                    {selectedProfile.Status === 'accepted' ? (
+                                        <button className="btn-primary" style={{width: '100%', padding: '12px', border: 'none', borderRadius: '12px', cursor: 'pointer', background: 'var(--primary-color)', color: 'white', fontWeight: 'bold'}} onClick={() => { setSelectedFriend(selectedProfile); handleTabChange('chats'); }}>
+                                            Message
+                                        </button>
+                                    ) : selectedProfile.Status === 'pending' ? (
+                                        <button className="btn-primary" disabled style={{width: '100%', padding: '12px', border: 'none', borderRadius: '12px', background: 'rgba(255,255,255,0.1)', color: 'var(--text-secondary)', fontWeight: 'bold'}}>
+                                            Request Sent
+                                        </button>
+                                    ) : (
+                                        <button className="btn-primary" style={{width: '100%', padding: '12px', border: 'none', borderRadius: '12px', cursor: 'pointer', background: 'var(--primary-color)', color: 'white', fontWeight: 'bold'}} onClick={() => {
+                                            sendFriendRequest(selectedProfile.Id);
+                                            setSelectedProfile({...selectedProfile, Status: 'pending'});
+                                        }}>
+                                            Add Friend
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    ) : activeTab === 'chats' && selectedFriend ? (
                         <>
                             <header className="main-chat-header">
                                 <div className="header-user-info">
@@ -408,7 +477,7 @@ const Chat = ({ user, setUser }) => {
                                         <input
                                             type="text"
                                             placeholder="Type a message..."
-                                            value={newMessage}
+                                            value={newMessage || ''}
                                             onChange={(e) => setNewMessage(e.target.value)}
                                         />
                                         <div className="input-actions">
