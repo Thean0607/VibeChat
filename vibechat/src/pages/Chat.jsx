@@ -6,6 +6,7 @@ import { LogOut, User as UserIcon, MessageSquare, Users,
     Settings, Search, 
     Home, Video, Menu, CheckCheck, Phone, Paperclip, Folder, Smile, Bold, Code, List
 } from 'lucide-react';
+import EmojiPicker from 'emoji-picker-react';
 import { generateSharedKey, encryptMessage, decryptMessage } from '../utils/encryption';
 import './Chat.css';
 
@@ -20,6 +21,10 @@ const Chat = ({ user, setUser }) => {
     const [selectedFriend, setSelectedFriend] = useState(null);
     const [messages, setMessages] = useState([]);
     const [newMessage, setNewMessage] = useState('');
+    const [onlineUsers, setOnlineUsers] = useState([]);
+    const [typingUsers, setTypingUsers] = useState(new Set());
+    const [isUploading, setIsUploading] = useState(false);
+    const [showEmojiPicker, setShowEmojiPicker] = useState(false);
     const messagesEndRef = useRef(null);
     const navigate = useNavigate();
 
@@ -52,6 +57,9 @@ const Chat = ({ user, setUser }) => {
             navigate('/');
             return;
         }
+        if (!socket.connected) {
+            socket.connect();
+        }
         fetchFriends();
     }, [user, navigate, fetchFriends]);
 
@@ -77,12 +85,18 @@ const Chat = ({ user, setUser }) => {
     // Friend actions
     const sendFriendRequest = async (addresseeId) => {
         try {
-            await axios.post(`http://${window.location.hostname}:5000/api/friends/request`, {
+            const res = await axios.post(`http://${window.location.hostname}:5000/api/friends/request`, {
                 requesterId: user.Id,
                 addresseeId
             });
+            if (res.data.autoAccepted) {
+                setSelectedProfile(prev => ({...prev, Status: 'accepted'}));
+            } else {
+                setSelectedProfile(prev => ({...prev, Status: 'pending', RequesterId: user.Id, AddresseeId: addresseeId}));
+            }
             setSearchQuery(prev => prev + ' '); 
             setSearchQuery(prev => prev.trim());
+            fetchFriends();
         } catch (err) {
             console.error(err);
         }
@@ -124,22 +138,83 @@ const Chat = ({ user, setUser }) => {
     // Socket
     useEffect(() => {
         const handleReceiveMessage = (message) => {
+            console.log("Received message via socket:", message);
             if (
                 selectedFriend && 
-                ((message.SenderId === user.Id && message.ReceiverId === selectedFriend.Id) || 
-                 (message.SenderId === selectedFriend.Id && message.ReceiverId === user.Id))
+                ((message.SenderId == user.Id && message.ReceiverId == selectedFriend.Id) || 
+                 (message.SenderId == selectedFriend.Id && message.ReceiverId == user.Id))
             ) {
                 const sharedKey = generateSharedKey(user.Id, selectedFriend.Id);
                 const decryptedMsg = {
                     ...message,
-                    Content: decryptMessage(message.Content, sharedKey)
+                    Content: message.Content ? decryptMessage(message.Content, sharedKey) : ''
                 };
                 setMessages(prev => [...prev, decryptedMsg]);
+                
+                if (message.SenderId == selectedFriend.Id) {
+                    axios.post(`http://${window.location.hostname}:5000/api/messages/read`, {
+                        senderId: selectedFriend.Id,
+                        receiverId: user.Id
+                    }).catch(console.error);
+                }
+            }
+            
+            setFriendsList(prev => {
+                const otherUserId = message.SenderId == user.Id ? message.ReceiverId : message.SenderId;
+                return prev.map(f => {
+                    if (f.Id == otherUserId) {
+                        const isCurrentlyOpen = selectedFriend && selectedFriend.Id == otherUserId;
+                        const isIncoming = message.SenderId == otherUserId;
+                        return {
+                            ...f,
+                            LastMessageAt: message.CreatedAt,
+                            UnreadCount: (isIncoming && !isCurrentlyOpen) ? (f.UnreadCount || 0) + 1 : (f.UnreadCount || 0)
+                        };
+                    }
+                    return f;
+                });
+            });
+        };
+        
+        const handleOnlineUsers = (users) => {
+            setOnlineUsers(users);
+        };
+        
+        const handleTypingEvent = ({ senderId, receiverId, isTyping }) => {
+            if (receiverId == user.Id) {
+                setTypingUsers(prev => {
+                    const newSet = new Set(prev);
+                    if (isTyping) newSet.add(senderId);
+                    else newSet.delete(senderId);
+                    return newSet;
+                });
             }
         };
+        
+        const handleMessagesRead = ({ senderId, receiverId }) => {
+            if (senderId == user.Id && selectedFriend && receiverId == selectedFriend.Id) {
+                setMessages(prev => prev.map(msg => 
+                    (msg.SenderId == user.Id && msg.ReceiverId == receiverId) ? { ...msg, IsRead: true } : msg
+                ));
+            }
+        };
+        
         socket.on('receiveMessage', handleReceiveMessage);
-        return () => socket.off('receiveMessage', handleReceiveMessage);
+        socket.on('onlineUsers', handleOnlineUsers);
+        socket.on('typing', handleTypingEvent);
+        socket.on('messagesRead', handleMessagesRead);
+        return () => {
+            socket.off('receiveMessage', handleReceiveMessage);
+            socket.off('onlineUsers', handleOnlineUsers);
+            socket.off('typing', handleTypingEvent);
+            socket.off('messagesRead', handleMessagesRead);
+        };
     }, [selectedFriend, user]);
+
+    useEffect(() => {
+        socket.on('friendUpdate', fetchFriends);
+        return () => socket.off('friendUpdate', fetchFriends);
+    }, [fetchFriends]);
 
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -156,9 +231,37 @@ const Chat = ({ user, setUser }) => {
             senderId: user.Id,
             receiverId: selectedFriend.Id,
             content: encryptedContent,
-            username: user.Username
+            username: user.Username,
+            attachmentUrl: null
         });
         setNewMessage('');
+    };
+
+    const handleFileUpload = async (e) => {
+        const file = e.target.files[0];
+        if (!file || !selectedFriend) return;
+        
+        setIsUploading(true);
+        const formData = new FormData();
+        formData.append('file', file);
+        
+        try {
+            const res = await axios.post(`http://${window.location.hostname}:5000/api/upload`, formData);
+            const attachmentUrl = res.data.url;
+            
+            socket.emit('sendMessage', {
+                senderId: user.Id,
+                receiverId: selectedFriend.Id,
+                content: '',
+                username: user.Username,
+                attachmentUrl
+            });
+        } catch (err) {
+            console.error("Upload failed", err);
+        } finally {
+            setIsUploading(false);
+            e.target.value = null; // reset
+        }
     };
 
     const handleLogout = () => {
@@ -169,8 +272,29 @@ const Chat = ({ user, setUser }) => {
 
     if (!user) return null;
 
-    const activeFriends = friendsList.filter(f => f.Status === 'accepted');
-    const pendingRequests = friendsList.filter(f => f.Status === 'pending' && f.AddresseeId === user.Id);
+    const activeFriends = friendsList
+        .filter(f => f.Status === 'accepted')
+        .sort((a, b) => {
+            const timeA = a.LastMessageAt ? new Date(a.LastMessageAt).getTime() : 0;
+            const timeB = b.LastMessageAt ? new Date(b.LastMessageAt).getTime() : 0;
+            return timeB - timeA;
+        });
+    const pendingRequests = friendsList.filter(f => f.Status === 'pending' && f.AddresseeId == user.Id);
+
+    const handleSelectFriend = async (friend) => {
+        setSelectedFriend(friend);
+        if (friend.UnreadCount > 0) {
+            try {
+                await axios.post(`http://${window.location.hostname}:5000/api/messages/read`, {
+                    senderId: friend.Id,
+                    receiverId: user.Id
+                });
+                setFriendsList(prev => prev.map(f => f.Id === friend.Id ? { ...f, UnreadCount: 0 } : f));
+            } catch (err) {
+                console.error("Failed to mark messages as read", err);
+            }
+        }
+    };
 
     const renderListPane = () => {
         if (activeTab === 'chats') {
@@ -195,21 +319,39 @@ const Chat = ({ user, setUser }) => {
                                 <div 
                                     key={friend.Id} 
                                     className={`chat-item ${selectedFriend?.Id === friend.Id ? 'active' : ''}`}
-                                    onClick={() => setSelectedFriend(friend)}
+                                    onClick={() => handleSelectFriend(friend)}
                                 >
                                     <div style={{position: 'relative'}}>
                                         <div className="chat-avatar" style={{background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white'}}>
                                             <UserIcon size={24} />
                                         </div>
-                                        <div className="chat-status-dot"></div>
+                                        <div className="chat-status-dot" style={{ background: onlineUsers.includes(friend.Id) ? '#22c55e' : '#6b7280' }}></div>
+                                        {friend.UnreadCount > 0 && (
+                                            <div style={{
+                                                position: 'absolute',
+                                                right: '-4px',
+                                                top: '-4px',
+                                                background: '#ef4444',
+                                                color: 'white',
+                                                borderRadius: '10px',
+                                                padding: '2px 6px',
+                                                fontSize: '10px',
+                                                fontWeight: 'bold',
+                                                border: '2px solid var(--surface-light)'
+                                            }}>
+                                                {friend.UnreadCount}
+                                            </div>
+                                        )}
                                     </div>
                                     <div className="chat-item-info">
                                         <div className="chat-item-top">
-                                            <span className="chat-item-name">{friend.FullName || friend.Username}</span>
-                                            <span className="chat-item-time">1:00 PM</span>
+                                            <span className="chat-item-name" style={{fontWeight: friend.UnreadCount > 0 ? 'bold' : 'normal'}}>{friend.FullName || friend.Username}</span>
+                                            <span className="chat-item-time" style={{color: friend.UnreadCount > 0 ? 'var(--primary-color)' : 'var(--text-secondary)'}}>
+                                                {friend.LastMessageAt ? new Date(friend.LastMessageAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : ''}
+                                            </span>
                                         </div>
-                                        <div className="chat-item-snippet">
-                                            Click to view messages
+                                        <div className="chat-item-snippet" style={{fontWeight: friend.UnreadCount > 0 ? 'bold' : 'normal', color: friend.UnreadCount > 0 ? 'var(--text-primary)' : 'var(--text-secondary)'}}>
+                                            {friend.UnreadCount > 0 ? `${friend.UnreadCount} unread message(s)` : 'Click to view messages'}
                                         </div>
                                     </div>
                                 </div>
@@ -248,7 +390,7 @@ const Chat = ({ user, setUser }) => {
                                         <div className="chat-item-info">
                                             <span className="chat-item-name">{req.FullName || req.Username}</span>
                                         </div>
-                                        <button onClick={(e) => { e.stopPropagation(); acceptFriendRequest(req.RequesterId); }} style={{background: 'var(--primary-color)', color: 'white', border: 'none', borderRadius: '8px', padding: '6px 12px', cursor: 'pointer'}}>
+                                        <button onClick={(e) => { e.stopPropagation(); acceptFriendRequest(req.RequesterId || req.Id); }} style={{background: 'var(--primary-color)', color: 'white', border: 'none', borderRadius: '8px', padding: '6px 12px', cursor: 'pointer', zIndex: 10}}>
                                             Accept
                                         </button>
                                     </div>
@@ -345,8 +487,13 @@ const Chat = ({ user, setUser }) => {
                         <button className={`nav-item ${activeTab === 'chats' ? 'active' : ''}`} onClick={() => handleTabChange('chats')} title="Chats">
                             <MessageSquare size={24} />
                         </button>
-                        <button className={`nav-item ${activeTab === 'people' ? 'active' : ''}`} onClick={() => handleTabChange('people')} title="People">
+                        <button className={`nav-item ${activeTab === 'people' ? 'active' : ''}`} onClick={() => handleTabChange('people')} title="People" style={{position: 'relative'}}>
                             <Users size={24} />
+                            {pendingRequests.length > 0 && (
+                                <span style={{position: 'absolute', top: 4, right: 4, background: '#ef4444', color: 'white', borderRadius: '50%', fontSize: '10px', width: '16px', height: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold'}}>
+                                    {pendingRequests.length}
+                                </span>
+                            )}
                         </button>
                     </div>
                     <div className="nav-bottom">
@@ -398,13 +545,21 @@ const Chat = ({ user, setUser }) => {
                                             Message
                                         </button>
                                     ) : selectedProfile.Status === 'pending' ? (
-                                        <button className="btn-primary" disabled style={{width: '100%', padding: '12px', border: 'none', borderRadius: '12px', background: 'rgba(255,255,255,0.1)', color: 'var(--text-secondary)', fontWeight: 'bold'}}>
-                                            Request Sent
-                                        </button>
+                                        selectedProfile.AddresseeId == user.Id ? (
+                                            <button className="btn-primary" style={{width: '100%', padding: '12px', border: 'none', borderRadius: '12px', cursor: 'pointer', background: 'var(--primary-color)', color: 'white', fontWeight: 'bold'}} onClick={() => {
+                                                acceptFriendRequest(selectedProfile.RequesterId || selectedProfile.Id);
+                                                setSelectedProfile({...selectedProfile, Status: 'accepted'});
+                                            }}>
+                                                Accept Request
+                                            </button>
+                                        ) : (
+                                            <button className="btn-primary" disabled style={{width: '100%', padding: '12px', border: 'none', borderRadius: '12px', background: 'rgba(255,255,255,0.1)', color: 'var(--text-secondary)', fontWeight: 'bold'}}>
+                                                Request Sent
+                                            </button>
+                                        )
                                     ) : (
                                         <button className="btn-primary" style={{width: '100%', padding: '12px', border: 'none', borderRadius: '12px', cursor: 'pointer', background: 'var(--primary-color)', color: 'white', fontWeight: 'bold'}} onClick={() => {
                                             sendFriendRequest(selectedProfile.Id);
-                                            setSelectedProfile({...selectedProfile, Status: 'pending'});
                                         }}>
                                             Add Friend
                                         </button>
@@ -421,8 +576,10 @@ const Chat = ({ user, setUser }) => {
                                     </div>
                                     <div className="header-user-text">
                                         <h3>{selectedFriend.FullName || selectedFriend.Username}</h3>
-                                        <div className="header-user-status">
-                                            <div className="chat-status-dot"></div> Online - Typing...
+                                        <div style={{fontSize: 12, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 4, marginTop: 4}}>
+                                            <div className="chat-status-dot" style={{ background: onlineUsers.includes(selectedFriend.Id) ? '#22c55e' : '#6b7280' }}></div> 
+                                            {onlineUsers.includes(selectedFriend.Id) ? 'Online' : 'Offline'}
+                                            {typingUsers.has(selectedFriend.Id) && <span style={{marginLeft: 8, fontStyle: 'italic', color: 'var(--primary-color)'}}>typing...</span>}
                                         </div>
                                     </div>
                                 </div>
@@ -440,7 +597,7 @@ const Chat = ({ user, setUser }) => {
                                     </div>
                                 ) : (
                                     messages.map((msg, index) => {
-                                        const isMine = msg.SenderId === user.Id;
+                                        const isMine = msg.SenderId == user.Id;
                                         return (
                                             <div key={msg.Id || index} className={`message-wrapper ${isMine ? 'mine' : 'other'}`}>
                                                 <div className="message-meta" style={{flexDirection: isMine ? 'row-reverse' : 'row'}}>
@@ -451,11 +608,17 @@ const Chat = ({ user, setUser }) => {
                                                     <span style={{fontSize: '11px'}}>{new Date(msg.CreatedAt || Date.now()).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
                                                 </div>
                                                 <div className="message-bubble">
+                                                    {msg.AttachmentUrl && (
+                                                        <div style={{marginBottom: msg.Content ? '8px' : '0'}}>
+                                                            <img src={msg.AttachmentUrl} alt="attachment" style={{maxWidth: '100%', borderRadius: '8px', maxHeight: '200px', objectFit: 'cover'}} />
+                                                        </div>
+                                                    )}
                                                     {msg.Content}
                                                 </div>
                                                 {isMine && (
                                                     <div className="message-status">
-                                                        <CheckCheck size={14} /> Read
+                                                        <CheckCheck size={14} color={msg.IsRead ? '#3b82f6' : 'var(--text-secondary)'} /> 
+                                                        {msg.IsRead ? 'Read' : 'Delivered'}
                                                     </div>
                                                 )}
                                             </div>
@@ -472,16 +635,41 @@ const Chat = ({ user, setUser }) => {
                                         <Code size={18} />
                                         <List size={18} />
                                     </div>
-                                    <div className="input-main">
-                                        <Smile size={20} style={{color: 'var(--text-secondary)', marginRight: '12px'}} />
-                                        <input
-                                            type="text"
-                                            placeholder="Type a message..."
-                                            value={newMessage || ''}
-                                            onChange={(e) => setNewMessage(e.target.value)}
+                                    <div className="input-main" style={{position: 'relative'}}>
+                                        <Smile 
+                                            size={20} 
+                                            style={{color: showEmojiPicker ? 'var(--primary-color)' : 'var(--text-secondary)', marginRight: '12px', cursor: 'pointer'}} 
+                                            onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                                        />
+                                        {showEmojiPicker && (
+                                            <div style={{position: 'absolute', bottom: '60px', left: '0', zIndex: 1000}}>
+                                                <EmojiPicker 
+                                                    onEmojiClick={(emojiData) => {
+                                                        setNewMessage(prev => prev + emojiData.emoji);
+                                                    }}
+                                                />
+                                            </div>
+                                        )}
+                                        <input 
+                                            type="text" 
+                                            placeholder="Type a message..."  
+                                            value={newMessage}
+                                            onChange={(e) => {
+                                                setNewMessage(e.target.value);
+                                                if (socket.connected && selectedFriend) {
+                                                    socket.emit('typing', { senderId: user.Id, receiverId: selectedFriend.Id, isTyping: true });
+                                                    if (window.typingTimeout) clearTimeout(window.typingTimeout);
+                                                    window.typingTimeout = setTimeout(() => {
+                                                        socket.emit('typing', { senderId: user.Id, receiverId: selectedFriend.Id, isTyping: false });
+                                                    }, 2000);
+                                                }
+                                            }}
                                         />
                                         <div className="input-actions">
-                                            <Paperclip size={20} />
+                                            <label style={{cursor: 'pointer', display: 'flex'}}>
+                                                <input type="file" style={{display: 'none'}} onChange={handleFileUpload} accept="image/*" />
+                                                <Paperclip size={20} color={isUploading ? 'var(--primary-color)' : 'currentColor'} />
+                                            </label>
                                             <Folder size={20} />
                                             <button type="submit" className="btn-send" disabled={!newMessage.trim()}>
                                                 <span style={{fontWeight: 'bold', fontSize: '14px'}}>Send</span>

@@ -3,12 +3,32 @@ const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 require('dotenv').config();
 const { poolPromise, sql } = require('./db');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Setup static uploads folder
+const uploadsDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir);
+}
+app.use('/uploads', express.static(uploadsDir));
+
+// Multer config
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, uploadsDir),
+    filename: (req, file, cb) => {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, uniqueSuffix + path.extname(file.originalname));
+    }
+});
+const upload = multer({ storage });
 
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -198,7 +218,7 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
-app.get('/api/users/:currentUserId', async (req, res) => {
+app.get('/api/users/list/:currentUserId', async (req, res) => {
     try {
         const { currentUserId } = req.params;
         const pool = await poolPromise;
@@ -217,7 +237,7 @@ app.get('/api/messages', async (req, res) => {
     try {
         const pool = await poolPromise;
         let query = `
-            SELECT m.Id, m.Content, m.CreatedAt, u.Username, u.FullName, m.SenderId, m.ReceiverId
+            SELECT m.Id, m.Content, m.CreatedAt, u.Username, u.FullName, m.SenderId, m.ReceiverId, m.IsRead, m.AttachmentUrl
             FROM Messages m
             JOIN Users u ON m.SenderId = u.Id
         `;
@@ -237,6 +257,14 @@ app.get('/api/messages', async (req, res) => {
         console.error(err);
         res.status(500).json({ error: 'Server error' });
     }
+});
+
+app.post('/api/upload', upload.single('file'), (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded' });
+    }
+    const fileUrl = `http://${req.hostname}:5000/uploads/${req.file.filename}`;
+    res.json({ url: fileUrl });
 });
 
 // Friendship Routes
@@ -269,18 +297,45 @@ app.get('/api/users/search', async (req, res) => {
 
 app.post('/api/friends/request', async (req, res) => {
     const { requesterId, addresseeId } = req.body;
+    console.log(`[FRIEND_REQ] requester=${requesterId} addressee=${addresseeId}`);
     try {
         const pool = await poolPromise;
-        await pool.request()
+        const check = await pool.request()
             .input('reqId', sql.Int, requesterId)
             .input('addId', sql.Int, addresseeId)
             .query(`
-                IF NOT EXISTS (SELECT 1 FROM Friendships WHERE (RequesterId=@reqId AND AddresseeId=@addId) OR (RequesterId=@addId AND AddresseeId=@reqId))
-                BEGIN
-                    INSERT INTO Friendships (RequesterId, AddresseeId, Status) VALUES (@reqId, @addId, 'pending')
-                END
+                SELECT Status, RequesterId, AddresseeId FROM Friendships 
+                WHERE (RequesterId=@reqId AND AddresseeId=@addId) 
+                   OR (RequesterId=@addId AND AddresseeId=@reqId)
             `);
-        res.json({ success: true });
+            
+        if (check.recordset.length > 0) {
+            const existing = check.recordset[0];
+            if (existing.Status === 'pending' && existing.RequesterId === addresseeId && existing.AddresseeId === requesterId) {
+                // Auto accept
+                await pool.request()
+                    .input('reqId', sql.Int, requesterId)
+                    .input('addId', sql.Int, addresseeId)
+                    .query(`
+                        UPDATE Friendships 
+                        SET Status = 'accepted' 
+                        WHERE RequesterId=@addId AND AddresseeId=@reqId
+                    `);
+                io.emit('friendUpdate');
+                return res.json({ success: true, autoAccepted: true });
+            } else {
+                return res.json({ success: true, alreadyExists: true });
+            }
+        } else {
+            await pool.request()
+                .input('reqId', sql.Int, requesterId)
+                .input('addId', sql.Int, addresseeId)
+                .query(`
+                    INSERT INTO Friendships (RequesterId, AddresseeId, Status) VALUES (@reqId, @addId, 'pending')
+                `);
+            io.emit('friendUpdate');
+            res.json({ success: true });
+        }
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Server error' });
@@ -289,6 +344,7 @@ app.post('/api/friends/request', async (req, res) => {
 
 app.post('/api/friends/accept', async (req, res) => {
     const { requesterId, addresseeId } = req.body;
+    console.log(`[FRIEND_ACCEPT] requester=${requesterId} addressee=${addresseeId}`);
     try {
         const pool = await poolPromise;
         await pool.request()
@@ -299,6 +355,7 @@ app.post('/api/friends/accept', async (req, res) => {
                 SET Status = 'accepted' 
                 WHERE RequesterId = @reqId AND AddresseeId = @addId
             `);
+        io.emit('friendUpdate');
         res.json({ success: true });
     } catch (err) {
         console.error(err);
@@ -313,7 +370,9 @@ app.get('/api/friends/:userId', async (req, res) => {
         const result = await pool.request()
             .input('userId', sql.Int, userId)
             .query(`
-                SELECT u.Id, u.Username, u.FullName, f.Status, f.RequesterId, f.AddresseeId 
+                SELECT u.Id, u.Username, u.FullName, f.Status, f.RequesterId, f.AddresseeId,
+                       (SELECT MAX(CreatedAt) FROM Messages m WHERE (m.SenderId = u.Id AND m.ReceiverId = @userId) OR (m.SenderId = @userId AND m.ReceiverId = u.Id)) as LastMessageAt,
+                       (SELECT COUNT(*) FROM Messages m WHERE m.SenderId = u.Id AND m.ReceiverId = @userId AND m.IsRead = 0) as UnreadCount
                 FROM Friendships f
                 JOIN Users u ON (u.Id = f.RequesterId OR u.Id = f.AddresseeId) AND u.Id != @userId
                 WHERE (f.RequesterId = @userId OR f.AddresseeId = @userId)
@@ -325,17 +384,46 @@ app.get('/api/friends/:userId', async (req, res) => {
     }
 });
 
+app.post('/api/messages/read', async (req, res) => {
+    const { senderId, receiverId } = req.body;
+    try {
+        const pool = await poolPromise;
+        await pool.request()
+            .input('senderId', sql.Int, senderId)
+            .input('receiverId', sql.Int, receiverId)
+            .query('UPDATE Messages SET IsRead = 1, ReadAt = GETDATE() WHERE SenderId = @senderId AND ReceiverId = @receiverId AND IsRead = 0');
+            
+        io.emit('messagesRead', { senderId, receiverId });
+        res.json({ success: true });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
 // Socket.io
+const userSockets = new Map(); // userId -> Set of socketIds
+
 io.on('connection', (socket) => {
     console.log('User connected:', socket.id);
     
+    // Send current online users immediately upon connection
+    socket.emit('onlineUsers', Array.from(userSockets.keys()));
+    
     socket.on('join', (user) => {
         socket.user = user;
-        console.log(`${user.Username} joined`);
+        const userId = parseInt(user.Id || user.id);
+        if (!userSockets.has(userId)) userSockets.set(userId, new Set());
+        userSockets.get(userId).add(socket.id);
+        io.emit('onlineUsers', Array.from(userSockets.keys()));
+        console.log(`${user.Username} joined (ID: ${userId})`);
     });
+    
+
 
     socket.on('sendMessage', async (data) => {
-        const { senderId, receiverId, content, username } = data;
+        console.log("Received sendMessage payload:", data);
+        const { senderId, receiverId, content, username, attachmentUrl } = data;
         
         try {
             const pool = await poolPromise;
@@ -343,13 +431,15 @@ io.on('connection', (socket) => {
                 .input('senderId', sql.Int, senderId)
                 .input('receiverId', sql.Int, receiverId)
                 .input('content', sql.NVarChar, content)
-                .query('INSERT INTO Messages (SenderId, ReceiverId, Content) OUTPUT INSERTED.Id, INSERTED.CreatedAt VALUES (@senderId, @receiverId, @content)');
+                .input('attachmentUrl', sql.NVarChar, attachmentUrl || null)
+                .query('INSERT INTO Messages (SenderId, ReceiverId, Content, AttachmentUrl) OUTPUT INSERTED.Id, INSERTED.CreatedAt VALUES (@senderId, @receiverId, @content, @attachmentUrl)');
             
             const newMessage = {
                 Id: result.recordset[0].Id,
                 SenderId: senderId,
                 ReceiverId: receiverId,
                 Content: content,
+                AttachmentUrl: attachmentUrl || null,
                 CreatedAt: result.recordset[0].CreatedAt,
                 Username: username
             };
@@ -360,10 +450,34 @@ io.on('connection', (socket) => {
         }
     });
 
+    socket.on('typing', ({ senderId, receiverId, isTyping }) => {
+        io.emit('typing', { senderId, receiverId, isTyping });
+    });
+
     socket.on('disconnect', () => {
         console.log('User disconnected:', socket.id);
+        for (const [userId, sockets] of userSockets.entries()) {
+            if (sockets.has(socket.id)) {
+                sockets.delete(socket.id);
+                if (sockets.size === 0) {
+                    userSockets.delete(userId);
+                }
+                io.emit('onlineUsers', Array.from(userSockets.keys()));
+                break;
+            }
+        }
     });
 });
 
+app.post('/api/upload', upload.single('file'), (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded' });
+    }
+    const fileUrl = `http://${req.hostname}:5000/uploads/${req.file.filename}`;
+    res.json({ url: fileUrl });
+});
+
 const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+server.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+});
