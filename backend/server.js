@@ -3,12 +3,28 @@ const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const multer = require('multer');
+const path = require('path');
 require('dotenv').config();
 const { poolPromise, sql } = require('./db');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// Multer Config
+const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        cb(null, 'uploads/');
+    },
+    filename: function (req, file, cb) {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, (req.user ? req.user.id : 'user') + '-' + uniqueSuffix + path.extname(file.originalname));
+    }
+});
+const upload = multer({ storage: storage });
 
 const server = http.createServer(app);
 const io = new Server(server, {
@@ -17,6 +33,18 @@ const io = new Server(server, {
         methods: ["GET", "POST"]
     }
 });
+
+// Auto-migrate Database
+poolPromise.then(pool => {
+    pool.request().query(`
+        IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[Messages]') AND name = 'ImageUrl')
+        ALTER TABLE Messages ADD ImageUrl NVARCHAR(MAX) NULL
+    `).then(() => {
+        console.log('Migrated Messages table (ImageUrl added)');
+    }).catch(err => {
+        console.error('Migration error:', err);
+    });
+}).catch(console.error);
 
 // Setup DB schema on start
 async function initDb() {
@@ -119,6 +147,33 @@ async function initDb() {
             END
         `);
         
+        // Create Tasks table
+        await pool.request().query(`
+            IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='Tasks' and xtype='U')
+            BEGIN
+                CREATE TABLE Tasks (
+                    Id INT IDENTITY(1,1) PRIMARY KEY,
+                    UserId INT NOT NULL,
+                    Title NVARCHAR(255) NOT NULL,
+                    IsCompleted BIT DEFAULT 0,
+                    CreatedAt DATETIME DEFAULT GETDATE(),
+                    CONSTRAINT FK_Tasks_User FOREIGN KEY (UserId) REFERENCES Users(Id) ON DELETE CASCADE
+                );
+            END
+        `);
+        
+        // Add new columns to Users if missing for Phase 2
+        await pool.request().query(`
+            IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[Users]') AND name = 'GoogleId')
+                ALTER TABLE Users ADD GoogleId NVARCHAR(255) NULL;
+            IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[Users]') AND name = 'FacebookId')
+                ALTER TABLE Users ADD FacebookId NVARCHAR(255) NULL;
+            IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[Users]') AND name = 'ResetToken')
+                ALTER TABLE Users ADD ResetToken NVARCHAR(255) NULL;
+            IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[Users]') AND name = 'ResetTokenExpiry')
+                ALTER TABLE Users ADD ResetTokenExpiry DATETIME NULL;
+        `);
+        
         console.log('Database tables initialized/updated');
     } catch (err) {
         console.error('Failed to initialize db:', err);
@@ -126,7 +181,76 @@ async function initDb() {
 }
 initDb();
 
+// JWT Middleware
+function authenticateToken(req, res, next) {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    if (token == null) return res.status(401).json({ error: 'No token provided' });
+
+    jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+        if (err) return res.status(403).json({ error: 'Invalid token' });
+        req.user = user;
+        next();
+    });
+}
+
 // Routes
+app.post('/api/messages/image', authenticateToken, upload.single('image'), async (req, res) => {
+    try {
+        if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+        const imageUrl = `/uploads/${req.file.filename}`;
+        res.json({ imageUrl });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+app.post('/api/messages/file', authenticateToken, upload.single('file'), async (req, res) => {
+    try {
+        if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+        const fileUrl = `/uploads/${req.file.filename}`;
+        const fileName = req.file.originalname;
+        res.json({ fileUrl, fileName });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+app.post('/api/users/avatar', authenticateToken, upload.single('avatar'), async (req, res) => {
+    try {
+        if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+        const avatarUrl = `/uploads/${req.file.filename}`;
+        
+        const pool = await poolPromise;
+        await pool.request()
+            .input('avatarUrl', sql.NVarChar, avatarUrl)
+            .input('userId', sql.Int, req.user.id)
+            .query('UPDATE Users SET AvatarUrl = @avatarUrl WHERE Id = @userId');
+            
+        res.json({ avatarUrl });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+app.get('/api/auth/me', authenticateToken, async (req, res) => {
+    try {
+        const pool = await poolPromise;
+        const result = await pool.request()
+            .input('id', sql.Int, req.user.id)
+            .query('SELECT Id, Username, FullName, DateOfBirth, Email, AvatarUrl, Bio, Status, LastLogin, IsActive, CreatedAt FROM Users WHERE Id = @id');
+        
+        if (result.recordset.length === 0) return res.status(404).json({ error: 'User not found' });
+        res.json({ user: result.recordset[0] });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
 app.post('/api/register', async (req, res) => {
     const { username, password, fullName, dateOfBirth, email } = req.body;
     if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
@@ -158,7 +282,9 @@ app.post('/api/register', async (req, res) => {
                 VALUES (@username, @password, @fullName, @dateOfBirth, @email)
             `);
             
-        res.json({ user: insertResult.recordset[0] });
+        const userObj = insertResult.recordset[0];
+        const token = jwt.sign({ id: userObj.Id, username: userObj.Username }, process.env.JWT_SECRET, { expiresIn: '7d' });
+        res.json({ user: userObj, token });
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Server error' });
@@ -191,14 +317,62 @@ app.post('/api/login', async (req, res) => {
         
         // Remove password before sending to client
         delete user.Password;
-        res.json({ user });
+        
+        const token = jwt.sign({ id: user.Id, username: user.Username }, process.env.JWT_SECRET, { expiresIn: '7d' });
+        res.json({ user, token });
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Server error' });
     }
 });
 
-app.get('/api/users/:currentUserId', async (req, res) => {
+// Auth Extensions (Skeletons)
+app.post('/api/auth/google', async (req, res) => {
+    // Mock logic
+    res.json({ message: "Google Login skeleton works", user: { Username: "GoogleUser" }, token: "mock_jwt_token" });
+});
+
+app.post('/api/auth/facebook', async (req, res) => {
+    // Mock logic
+    res.json({ message: "Facebook Login skeleton works", user: { Username: "FacebookUser" }, token: "mock_jwt_token" });
+});
+
+app.post('/api/auth/forgot-password', async (req, res) => {
+    // Mock logic
+    res.json({ message: "Password reset link sent (mock)" });
+});
+
+app.post('/api/auth/change-password', authenticateToken, async (req, res) => {
+    const { oldPassword, newPassword } = req.body;
+    if (!oldPassword || !newPassword) return res.status(400).json({ error: 'All fields are required' });
+    try {
+        const pool = await poolPromise;
+        const result = await pool.request()
+            .input('id', sql.Int, req.user.id)
+            .query('SELECT Password FROM Users WHERE Id = @id');
+            
+        const user = result.recordset[0];
+        if (!user || !user.Password) return res.status(400).json({ error: 'User not found or has no password' });
+        
+        const isMatch = await bcrypt.compare(oldPassword, user.Password);
+        if (!isMatch) return res.status(400).json({ error: 'Incorrect old password' });
+        
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(newPassword, salt);
+        
+        await pool.request()
+            .input('id', sql.Int, req.user.id)
+            .input('password', sql.NVarChar, hashedPassword)
+            .query('UPDATE Users SET Password = @password WHERE Id = @id');
+            
+        res.json({ success: true, message: "Password changed successfully" });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+app.get('/api/users/:currentUserId', authenticateToken, async (req, res) => {
     try {
         const { currentUserId } = req.params;
         const pool = await poolPromise;
@@ -212,12 +386,12 @@ app.get('/api/users/:currentUserId', async (req, res) => {
     }
 });
 
-app.get('/api/messages', async (req, res) => {
+app.get('/api/messages', authenticateToken, async (req, res) => {
     const { user1, user2 } = req.query;
     try {
         const pool = await poolPromise;
         let query = `
-            SELECT m.Id, m.Content, m.CreatedAt, u.Username, u.FullName, m.SenderId, m.ReceiverId
+            SELECT m.Id, m.Content, m.ImageUrl, m.AttachmentUrl, m.CreatedAt, u.Username, u.FullName, u.AvatarUrl, m.SenderId, m.ReceiverId
             FROM Messages m
             JOIN Users u ON m.SenderId = u.Id
         `;
@@ -239,8 +413,52 @@ app.get('/api/messages', async (req, res) => {
     }
 });
 
+// Tasks API
+app.get('/api/tasks', authenticateToken, async (req, res) => {
+    try {
+        const pool = await poolPromise;
+        const result = await pool.request()
+            .input('userId', sql.Int, req.user.id)
+            .query('SELECT * FROM Tasks WHERE UserId = @userId ORDER BY CreatedAt DESC');
+        res.json(result.recordset);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+app.post('/api/tasks', authenticateToken, async (req, res) => {
+    const { title } = req.body;
+    try {
+        const pool = await poolPromise;
+        const result = await pool.request()
+            .input('userId', sql.Int, req.user.id)
+            .input('title', sql.NVarChar, title)
+            .query('INSERT INTO Tasks (UserId, Title) OUTPUT INSERTED.* VALUES (@userId, @title)');
+        res.json(result.recordset[0]);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+app.put('/api/tasks/:id', authenticateToken, async (req, res) => {
+    const { isCompleted } = req.body;
+    try {
+        const pool = await poolPromise;
+        await pool.request()
+            .input('id', sql.Int, req.params.id)
+            .input('isCompleted', sql.Bit, isCompleted ? 1 : 0)
+            .query('UPDATE Tasks SET IsCompleted = @isCompleted WHERE Id = @id');
+        res.json({ success: true });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
 // Friendship Routes
-app.get('/api/users/search', async (req, res) => {
+app.get('/api/users/search', authenticateToken, async (req, res) => {
     const { q, currentUserId } = req.query;
     try {
         const pool = await poolPromise;
@@ -248,7 +466,7 @@ app.get('/api/users/search', async (req, res) => {
             .input('q', sql.NVarChar, `%${q}%`)
             .input('currentUserId', sql.Int, currentUserId)
             .query(`
-                SELECT u.Id, u.Username, u.FullName, 
+                SELECT u.Id, u.Username, u.FullName, u.AvatarUrl,
                        f.Status, f.RequesterId, f.AddresseeId 
                 FROM Users u
                 LEFT JOIN Friendships f 
@@ -264,7 +482,7 @@ app.get('/api/users/search', async (req, res) => {
     }
 });
 
-app.post('/api/friends/request', async (req, res) => {
+app.post('/api/friends/request', authenticateToken, async (req, res) => {
     const { requesterId, addresseeId } = req.body;
     try {
         const pool = await poolPromise;
@@ -284,7 +502,7 @@ app.post('/api/friends/request', async (req, res) => {
     }
 });
 
-app.post('/api/friends/accept', async (req, res) => {
+app.post('/api/friends/accept', authenticateToken, async (req, res) => {
     const { requesterId, addresseeId } = req.body;
     try {
         const pool = await poolPromise;
@@ -303,14 +521,14 @@ app.post('/api/friends/accept', async (req, res) => {
     }
 });
 
-app.get('/api/friends/:userId', async (req, res) => {
+app.get('/api/friends/:userId', authenticateToken, async (req, res) => {
     const { userId } = req.params;
     try {
         const pool = await poolPromise;
         const result = await pool.request()
             .input('userId', sql.Int, userId)
             .query(`
-                SELECT u.Id, u.Username, u.FullName, f.Status, f.RequesterId, f.AddresseeId 
+                SELECT u.Id, u.Username, u.FullName, u.AvatarUrl, f.Status, f.RequesterId, f.AddresseeId 
                 FROM Friendships f
                 JOIN Users u ON (u.Id = f.RequesterId OR u.Id = f.AddresseeId) AND u.Id != @userId
                 WHERE (f.RequesterId = @userId OR f.AddresseeId = @userId)
@@ -323,16 +541,25 @@ app.get('/api/friends/:userId', async (req, res) => {
 });
 
 // Socket.io
+const onlineUsers = new Map(); // Map of userId -> socket.id
+
 io.on('connection', (socket) => {
     console.log('User connected:', socket.id);
     
     socket.on('join', (user) => {
         socket.user = user;
-        console.log(`${user.Username} joined`);
+        onlineUsers.set(user.Id, socket.id);
+        console.log(`${user.Username} joined (ID: ${user.Id})`);
+        
+        // Broadcast to everyone that this user is online
+        io.emit('userOnline', user.Id);
+        
+        // Send the list of all currently online users to the user who just joined
+        socket.emit('onlineUsersList', Array.from(onlineUsers.keys()));
     });
 
     socket.on('sendMessage', async (data) => {
-        const { senderId, receiverId, content, username } = data;
+        const { senderId, receiverId, content, username, imageUrl } = data;
         
         try {
             const pool = await poolPromise;
@@ -340,25 +567,112 @@ io.on('connection', (socket) => {
                 .input('senderId', sql.Int, senderId)
                 .input('receiverId', sql.Int, receiverId)
                 .input('content', sql.NVarChar, content)
-                .query('INSERT INTO Messages (SenderId, ReceiverId, Content) OUTPUT INSERTED.Id, INSERTED.CreatedAt VALUES (@senderId, @receiverId, @content)');
+                .input('imageUrl', sql.NVarChar, imageUrl || null)
+                .query('INSERT INTO Messages (SenderId, ReceiverId, Content, ImageUrl) OUTPUT INSERTED.Id, INSERTED.CreatedAt VALUES (@senderId, @receiverId, @content, @imageUrl)');
             
             const newMessage = {
                 Id: result.recordset[0].Id,
                 SenderId: senderId,
                 ReceiverId: receiverId,
                 Content: content,
+                ImageUrl: imageUrl,
+                AttachmentUrl: null,
                 CreatedAt: result.recordset[0].CreatedAt,
                 Username: username
             };
             
-            io.emit('receiveMessage', newMessage);
+            // Send to receiver
+            const receiverSocketId = onlineUsers.get(receiverId);
+            if (receiverSocketId) {
+                io.to(receiverSocketId).emit('receiveMessage', newMessage);
+            }
+            
+            // Also send back to sender
+            socket.emit('receiveMessage', newMessage);
         } catch (err) {
             console.error('Error saving message:', err);
+        }
+    });
+    
+    socket.on('sendFileMessage', async (data) => {
+        const { senderId, receiverId, content, username, attachmentUrl } = data;
+        
+        try {
+            const pool = await poolPromise;
+            const result = await pool.request()
+                .input('senderId', sql.Int, senderId)
+                .input('receiverId', sql.Int, receiverId)
+                .input('content', sql.NVarChar, content)
+                .input('attachmentUrl', sql.NVarChar, attachmentUrl)
+                .query('INSERT INTO Messages (SenderId, ReceiverId, Content, AttachmentUrl) OUTPUT INSERTED.Id, INSERTED.CreatedAt VALUES (@senderId, @receiverId, @content, @attachmentUrl)');
+            
+            const newMessage = {
+                Id: result.recordset[0].Id,
+                SenderId: senderId,
+                ReceiverId: receiverId,
+                Content: content,
+                ImageUrl: null,
+                AttachmentUrl: attachmentUrl,
+                CreatedAt: result.recordset[0].CreatedAt,
+                Username: username
+            };
+            
+            // Send to receiver
+            const receiverSocketId = onlineUsers.get(receiverId);
+            if (receiverSocketId) {
+                io.to(receiverSocketId).emit('receiveMessage', newMessage);
+            }
+            
+            // Also send back to sender
+            socket.emit('receiveMessage', newMessage);
+        } catch (err) {
+            console.error('Error saving file message:', err);
+        }
+    });
+
+    socket.on('typing', ({ senderId, receiverId }) => {
+        const receiverSocketId = onlineUsers.get(receiverId);
+        if (receiverSocketId) {
+            io.to(receiverSocketId).emit('typing', { senderId });
+        }
+    });
+
+    socket.on('stopTyping', ({ senderId, receiverId }) => {
+        const receiverSocketId = onlineUsers.get(receiverId);
+        if (receiverSocketId) {
+            io.to(receiverSocketId).emit('stopTyping', { senderId });
+        }
+    });
+
+    // WebRTC Signaling
+    socket.on('callUser', (data) => {
+        const receiverSocketId = onlineUsers.get(data.userToCall);
+        if (receiverSocketId) {
+            io.to(receiverSocketId).emit('callUser', { signal: data.signalData, from: data.from, callerName: data.callerName });
+        }
+    });
+
+    socket.on('answerCall', (data) => {
+        const callerSocketId = onlineUsers.get(data.to);
+        if (callerSocketId) {
+            io.to(callerSocketId).emit('callAccepted', data.signal);
+        }
+    });
+
+    socket.on('endCall', (data) => {
+        const otherUserSocketId = onlineUsers.get(data.to);
+        if (otherUserSocketId) {
+            io.to(otherUserSocketId).emit('callEnded');
         }
     });
 
     socket.on('disconnect', () => {
         console.log('User disconnected:', socket.id);
+        if (socket.user) {
+            onlineUsers.delete(socket.user.Id);
+            // Broadcast to everyone that this user went offline
+            io.emit('userOffline', socket.user.Id);
+        }
     });
 });
 

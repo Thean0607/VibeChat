@@ -25,6 +25,9 @@ const Login = ({ setUser }) => {
     const [password, setPassword] = useState('123');
     const [isSocialReg, setIsSocialReg] = useState(false);
     const [linkingProvider, setLinkingProvider] = useState(null);
+    const [showForgotPassword, setShowForgotPassword] = useState(false);
+    const [resetEmail, setResetEmail] = useState('');
+    const [resetMessage, setResetMessage] = useState('');
     
     // Additional fields for Register
     const [fullName, setFullName] = useState('');
@@ -33,15 +36,39 @@ const Login = ({ setUser }) => {
     const [confirmPassword, setConfirmPassword] = useState('');
     const [acceptTerms, setAcceptTerms] = useState(false);
     
-    const handleSocialClick = (provider) => {
-        if (isLogin) {
-            alert(`Tính năng đăng nhập bằng ${provider} đang được phát triển.`);
-        } else {
-            setLinkingProvider(provider);
-            setTimeout(() => {
-                setLinkingProvider(null);
-                setIsSocialReg(true);
-            }, 1500);
+    const handleSocialClick = async (provider) => {
+        try {
+            setLoading(true);
+            const endpoint = provider === 'Google' ? '/api/auth/google' : '/api/auth/facebook';
+            const response = await axios.post(`http://localhost:5000${endpoint}`, { token: "mock_token" });
+            
+            // Mock login success
+            const loggedInUser = response.data.user;
+            const token = response.data.token;
+            
+            localStorage.setItem('token', token);
+            axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+            setUser(loggedInUser);
+            
+            socket.auth = { username: loggedInUser.Username, token };
+            socket.connect();
+            socket.emit('join', loggedInUser);
+            
+            navigate('/chat');
+        } catch (err) {
+            setError(err.response?.data?.error || `Failed to login with ${provider}`);
+        } finally {
+            setLoading(false);
+        }
+    };
+    
+    const handleForgotPassword = async (e) => {
+        e.preventDefault();
+        try {
+            const res = await axios.post('http://localhost:5000/api/auth/forgot-password', { email: resetEmail });
+            setResetMessage(res.data.message);
+        } catch (err) {
+            setResetMessage("Error sending reset link.");
         }
     };
     
@@ -82,9 +109,16 @@ const Login = ({ setUser }) => {
             const response = await axios.post(`http://localhost:5000${endpoint}`, payload);
             
             const loggedInUser = response.data.user;
+            const token = response.data.token;
+            
+            if (token) {
+                localStorage.setItem('token', token);
+                axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+            }
+
             setUser(loggedInUser);
             
-            socket.auth = { username: loggedInUser.Username };
+            socket.auth = { username: loggedInUser.Username, token };
             socket.connect();
             socket.emit('join', loggedInUser);
             
@@ -112,10 +146,25 @@ const Login = ({ setUser }) => {
                 {/* Right Side: Auth Form */}
                 <div className="landing-form-container">
                     <div className="glass-panel auth-panel">
-                        <div className="auth-header">
-                            <h2>{isLogin ? 'Welcome Back' : 'Create Account'}</h2>
-                            <p>{isLogin ? 'Login to continue your chats' : 'Sign up to get started'}</p>
-                        </div>
+                        {showForgotPassword ? (
+                            <div className="auth-header">
+                                <h2>Reset Password</h2>
+                                <p>Enter your email to receive a reset link</p>
+                                <form onSubmit={handleForgotPassword} style={{marginTop: '24px'}}>
+                                    <div className="input-group">
+                                        <input type="email" className="input-field" placeholder="Enter your email" value={resetEmail} onChange={e => setResetEmail(e.target.value)} required />
+                                    </div>
+                                    <button type="submit" className="btn-primary login-btn">Send Reset Link</button>
+                                    {resetMessage && <p style={{marginTop: '12px', color: '#22c55e', fontSize: '14px'}}>{resetMessage}</p>}
+                                    <p style={{marginTop: '16px', fontSize: '14px', cursor: 'pointer', color: 'var(--primary-color)'}} onClick={() => setShowForgotPassword(false)}>Back to Login</p>
+                                </form>
+                            </div>
+                        ) : (
+                            <>
+                                <div className="auth-header">
+                                    <h2>{isLogin ? 'Welcome Back' : 'Create Account'}</h2>
+                                    <p>{isLogin ? 'Login to continue your chats' : 'Sign up to get started'}</p>
+                                </div>
                         
                         {error && <div className="error-message">{error}</div>}
                         
@@ -257,6 +306,12 @@ const Login = ({ setUser }) => {
                             )}
                         </form>
                         
+                        {isLogin && (
+                            <div style={{textAlign: 'right', marginTop: '8px', marginBottom: '16px'}}>
+                                <span style={{fontSize: '14px', color: 'var(--primary-color)', cursor: 'pointer'}} onClick={() => setShowForgotPassword(true)}>Forgot Password?</span>
+                            </div>
+                        )}
+                        
                         <div className="auth-toggle">
                             <p>
                                 {isLogin ? "Don't have an account? " : "Already have an account? "}
@@ -268,6 +323,8 @@ const Login = ({ setUser }) => {
                                 </span>
                             </p>
                         </div>
+                        </>
+                        )}
                     </div>
                 </div>
             </div>
