@@ -24,6 +24,7 @@ const Login = ({ setUser }) => {
     const [username, setUsername] = useState('demo');
     const [password, setPassword] = useState('123');
     const [isSocialReg, setIsSocialReg] = useState(false);
+    // eslint-disable-next-line no-unused-vars
     const [linkingProvider, setLinkingProvider] = useState(null);
     const [showForgotPassword, setShowForgotPassword] = useState(false);
     const [resetEmail, setResetEmail] = useState('');
@@ -40,7 +41,7 @@ const Login = ({ setUser }) => {
         try {
             setLoading(true);
             const endpoint = provider === 'Google' ? '/api/auth/google' : '/api/auth/facebook';
-            const response = await axios.post(`http://localhost:5000${endpoint}`, { token: "mock_token" });
+            const response = await axios.post(`http://${window.location.hostname}:5000${endpoint}`, { token: "mock_token" });
             
             // Mock login success
             const loggedInUser = response.data.user;
@@ -65,7 +66,7 @@ const Login = ({ setUser }) => {
     const handleForgotPassword = async (e) => {
         e.preventDefault();
         try {
-            const res = await axios.post('http://localhost:5000/api/auth/forgot-password', { email: resetEmail });
+            const res = await axios.post(`http://${window.location.hostname}:5000/api/auth/forgot-password`, { email: resetEmail });
             setResetMessage(res.data.message);
         } catch (err) {
             setResetMessage("Error sending reset link.");
@@ -106,7 +107,7 @@ const Login = ({ setUser }) => {
                 ? { username, password }
                 : { username, password, fullName, dateOfBirth, email };
                 
-            const response = await axios.post(`http://localhost:5000${endpoint}`, payload);
+            const response = await axios.post(`http://${window.location.hostname}:5000${endpoint}`, payload);
             
             const loggedInUser = response.data.user;
             const token = response.data.token;

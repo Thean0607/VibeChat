@@ -28,8 +28,9 @@ const Chat = ({ user, setUser }) => {
     const [tasks, setTasks] = useState([]);
     const [newTaskTitle, setNewTaskTitle] = useState('');
     const [incomingCall, setIncomingCall] = useState(null);
+    // eslint-disable-next-line no-unused-vars
     const [isCalling, setIsCalling] = useState(false);
-    
+
     // WebRTC State
     const [peer, setPeer] = useState(null);
     const [myStream, setMyStream] = useState(null);
@@ -60,7 +61,7 @@ const Chat = ({ user, setUser }) => {
     const fetchFriends = useCallback(async () => {
         if (!user) return;
         try {
-            const response = await axios.get(`http://localhost:5000/api/friends/${user.Id}`);
+            const response = await axios.get(`http://${window.location.hostname}:5000/api/friends/${user.Id}`);
             setFriendsList(response.data);
         } catch (err) {
             console.error("Failed to fetch friends", err);
@@ -70,7 +71,7 @@ const Chat = ({ user, setUser }) => {
     const fetchTasks = useCallback(async () => {
         if (!user) return;
         try {
-            const response = await axios.get('http://localhost:5000/api/tasks');
+            const response = await axios.get(`http://${window.location.hostname}:5000/api/tasks`);
             setTasks(response.data);
         } catch (err) {
             console.error("Failed to fetch tasks", err);
@@ -92,7 +93,7 @@ const Chat = ({ user, setUser }) => {
             const delayDebounceFn = setTimeout(async () => {
                 if (searchQuery.trim().length > 0) {
                     try {
-                        const response = await axios.get(`http://localhost:5000/api/users/search?q=${searchQuery}&currentUserId=${user.Id}`);
+                        const response = await axios.get(`http://${window.location.hostname}:5000/api/users/search?q=${searchQuery}&currentUserId=${user.Id}`);
                         setSearchResults(response.data);
                     } catch (err) {
                         console.error(err);
@@ -108,7 +109,7 @@ const Chat = ({ user, setUser }) => {
     // Friend actions
     const sendFriendRequest = async (addresseeId) => {
         try {
-            await axios.post('http://localhost:5000/api/friends/request', {
+            await axios.post(`http://${window.location.hostname}:5000/api/friends/request`, {
                 requesterId: user.Id,
                 addresseeId
             });
@@ -121,7 +122,7 @@ const Chat = ({ user, setUser }) => {
 
     const acceptFriendRequest = async (requesterId) => {
         try {
-            await axios.post('http://localhost:5000/api/friends/accept', {
+            await axios.post(`http://${window.location.hostname}:5000/api/friends/accept`, {
                 requesterId,
                 addresseeId: user.Id
             });
@@ -136,7 +137,7 @@ const Chat = ({ user, setUser }) => {
         if (!selectedFriend || !user) return;
         const fetchMessages = async () => {
             try {
-                const response = await axios.get(`http://localhost:5000/api/messages?user1=${user.Id}&user2=${selectedFriend.Id}`);
+                const response = await axios.get(`http://${window.location.hostname}:5000/api/messages?user1=${user.Id}&user2=${selectedFriend.Id}`);
                 setMessages(response.data);
             } catch (err) {
                 console.error("Failed to fetch messages", err);
@@ -173,12 +174,12 @@ const Chat = ({ user, setUser }) => {
         const handleReceiveMessage = (message) => {
             if (
                 selectedFriend && 
-                ((message.SenderId === user.Id && message.ReceiverId === selectedFriend.Id) || 
-                 (message.SenderId === selectedFriend.Id && message.ReceiverId === user.Id))
+                ((message.SenderId == user.Id && message.ReceiverId == selectedFriend.Id) || 
+                 (message.SenderId == selectedFriend.Id && message.ReceiverId == user.Id))
             ) {
                 setMessages(prev => [...prev, message]);
-                if (message.SenderId !== user.Id) playNotificationSound();
-            } else if (message.SenderId !== user.Id) {
+                if (message.SenderId != user.Id) playNotificationSound();
+            } else if (message.SenderId != user.Id) {
                 playNotificationSound();
                 setUnreadCounts(prev => ({
                     ...prev,
@@ -206,13 +207,18 @@ const Chat = ({ user, setUser }) => {
         };
         
         const handleTyping = ({ senderId }) => {
-            if (selectedFriend && senderId === selectedFriend.Id) setIsTyping(true);
+            if (selectedFriend && senderId == selectedFriend.Id) setIsTyping(true);
         };
         
         const handleStopTyping = ({ senderId }) => {
-            if (selectedFriend && senderId === selectedFriend.Id) setIsTyping(false);
+            if (selectedFriend && senderId == selectedFriend.Id) setIsTyping(false);
         };
 
+        const handleConnect = () => {
+            if (user) socket.emit('join', user);
+        };
+
+        socket.on('connect', handleConnect);
         socket.on('receiveMessage', handleReceiveMessage);
         socket.on('onlineUsersList', handleOnlineUsersList);
         socket.on('userOnline', handleUserOnline);
@@ -221,6 +227,7 @@ const Chat = ({ user, setUser }) => {
         socket.on('stopTyping', handleStopTyping);
 
         return () => {
+            socket.off('connect', handleConnect);
             socket.off('receiveMessage', handleReceiveMessage);
             socket.off('onlineUsersList', handleOnlineUsersList);
             socket.off('userOnline', handleUserOnline);
@@ -233,7 +240,11 @@ const Chat = ({ user, setUser }) => {
     // PeerJS Init
     useEffect(() => {
         if (!user) return;
-        const newPeer = new Peer(user.Id.toString());
+        const newPeer = new Peer(user.Id.toString(), {
+            host: window.location.hostname,
+            port: 5001,
+            path: '/myapp'
+        });
         setPeer(newPeer);
         
         newPeer.on('call', (call) => {
@@ -314,7 +325,7 @@ const Chat = ({ user, setUser }) => {
         formData.append('avatar', file);
 
         try {
-            const response = await axios.post('http://localhost:5000/api/users/avatar', formData, {
+            const response = await axios.post(`http://${window.location.hostname}:5000/api/users/avatar`, formData, {
                 headers: {
                     'Content-Type': 'multipart/form-data'
                 }
@@ -334,7 +345,7 @@ const Chat = ({ user, setUser }) => {
         formData.append('image', file);
 
         try {
-            const response = await axios.post('http://localhost:5000/api/messages/image', formData, {
+            const response = await axios.post(`http://${window.location.hostname}:5000/api/messages/image`, formData, {
                 headers: { 'Content-Type': 'multipart/form-data' }
             });
             
@@ -359,7 +370,7 @@ const Chat = ({ user, setUser }) => {
         formData.append('file', file);
 
         try {
-            const response = await axios.post('http://localhost:5000/api/messages/file', formData, {
+            const response = await axios.post(`http://${window.location.hostname}:5000/api/messages/file`, formData, {
                 headers: { 'Content-Type': 'multipart/form-data' }
             });
             
@@ -379,7 +390,7 @@ const Chat = ({ user, setUser }) => {
     const handleAddTask = async (e) => {
         if (e.key === 'Enter' && newTaskTitle.trim()) {
             try {
-                const response = await axios.post('http://localhost:5000/api/tasks', { title: newTaskTitle });
+                const response = await axios.post(`http://${window.location.hostname}:5000/api/tasks`, { title: newTaskTitle });
                 setTasks([response.data, ...tasks]);
                 setNewTaskTitle('');
             } catch (err) {
@@ -390,7 +401,7 @@ const Chat = ({ user, setUser }) => {
 
     const handleToggleTask = async (task) => {
         try {
-            await axios.put(`http://localhost:5000/api/tasks/${task.Id}`, { isCompleted: !task.IsCompleted });
+            await axios.put(`http://${window.location.hostname}:5000/api/tasks/${task.Id}`, { isCompleted: !task.IsCompleted });
             setTasks(tasks.map(t => t.Id === task.Id ? { ...t, IsCompleted: !t.IsCompleted } : t));
         } catch (err) {
             console.error(err);
@@ -400,7 +411,7 @@ const Chat = ({ user, setUser }) => {
     const handleChangePassword = async (e) => {
         e.preventDefault();
         try {
-            const res = await axios.post('http://localhost:5000/api/auth/change-password', { oldPassword, newPassword });
+            const res = await axios.post(`http://${window.location.hostname}:5000/api/auth/change-password`, { oldPassword, newPassword });
             setChangePasswordMsg(res.data.message);
             setOldPassword('');
             setNewPassword('');
@@ -419,6 +430,12 @@ const Chat = ({ user, setUser }) => {
                 const call = peer.call(selectedFriend.Id.toString(), stream, {
                     metadata: { callerName: user.Username }
                 });
+                
+                if (!call) {
+                    alert("Could not connect to the peer server to place the call.");
+                    endCall();
+                    return;
+                }
                 
                 currentCallRef.current = call;
                 
@@ -513,12 +530,12 @@ const Chat = ({ user, setUser }) => {
                             activeFriends.map(friend => (
                                 <div 
                                     key={friend.Id} 
-                                    className={`chat-item ${selectedFriend?.Id === friend.Id ? 'active' : ''}`}
+                                    className={`chat-item ${selectedFriend?.Id == friend.Id ? 'active' : ''}`}
                                     onClick={() => handleSelectFriend(friend)}
                                 >
                                     <div style={{position: 'relative'}}>
                                         <div className="chat-avatar" style={{background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', overflow: 'hidden'}}>
-                                            {friend.AvatarUrl ? <img src={`http://localhost:5000${friend.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : <UserIcon size={24} />}
+                                            {friend.AvatarUrl ? <img src={`http://${window.location.hostname}:5000${friend.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : <UserIcon size={24} />}
                                         </div>
                                         <div className="chat-status-dot" style={{ backgroundColor: onlineUsers.has(friend.Id) ? '#22c55e' : '#6b7280' }}></div>
                                     </div>
@@ -564,7 +581,7 @@ const Chat = ({ user, setUser }) => {
                                 {pendingRequests.map(req => (
                                     <div key={req.Id} className="chat-item">
                                         <div className="chat-avatar" style={{background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', overflow: 'hidden'}}>
-                                            {req.AvatarUrl ? <img src={`http://localhost:5000${req.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : <UserIcon size={24} />}
+                                            {req.AvatarUrl ? <img src={`http://${window.location.hostname}:5000${req.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : <UserIcon size={24} />}
                                         </div>
                                         <div className="chat-item-info">
                                             <span className="chat-item-name">{req.FullName || req.Username}</span>
@@ -585,7 +602,7 @@ const Chat = ({ user, setUser }) => {
                                 searchResults.map(su => (
                                     <div key={su.Id} className="chat-item">
                                         <div className="chat-avatar" style={{background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', overflow: 'hidden'}}>
-                                            {su.AvatarUrl ? <img src={`http://localhost:5000${su.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : <UserIcon size={24} />}
+                                            {su.AvatarUrl ? <img src={`http://${window.location.hostname}:5000${su.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : <UserIcon size={24} />}
                                         </div>
                                         <div className="chat-item-info">
                                             <span className="chat-item-name">{su.FullName || su.Username}</span>
@@ -617,7 +634,7 @@ const Chat = ({ user, setUser }) => {
                     <div className="profile-container">
                         <div className="profile-avatar-wrapper">
                             {user.AvatarUrl ? (
-                                <img src={`http://localhost:5000${user.AvatarUrl}`} alt="Avatar" className="profile-avatar" />
+                                <img src={`http://${window.location.hostname}:5000${user.AvatarUrl}`} alt="Avatar" className="profile-avatar" />
                             ) : (
                                 <div className="profile-avatar-placeholder">
                                     <UserIcon size={64} />
@@ -706,7 +723,7 @@ const Chat = ({ user, setUser }) => {
                 {/* COLUMN 1: SIDEBAR NAV */}
                 <nav className="sidebar-nav">
                     <div className="nav-avatar" style={{background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', overflow: 'hidden', cursor: 'pointer'}} onClick={() => setActiveTab('profile')}>
-                        {user.AvatarUrl ? <img src={`http://localhost:5000${user.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : <UserIcon size={24} />}
+                        {user.AvatarUrl ? <img src={`http://${window.location.hostname}:5000${user.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : <UserIcon size={24} />}
                         <div className="nav-status-dot"></div>
                     </div>
                     <div className="nav-items">
@@ -742,7 +759,7 @@ const Chat = ({ user, setUser }) => {
                             <header className="main-chat-header">
                                 <div className="header-user-info">
                                     <div className="chat-avatar" style={{background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', overflow: 'hidden'}}>
-                                        {selectedFriend.AvatarUrl ? <img src={`http://localhost:5000${selectedFriend.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : <UserIcon size={24} />}
+                                        {selectedFriend.AvatarUrl ? <img src={`http://${window.location.hostname}:5000${selectedFriend.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : <UserIcon size={24} />}
                                     </div>
                                     <div className="header-user-text">
                                         <h3>{selectedFriend.FullName || selectedFriend.Username}</h3>
@@ -767,15 +784,15 @@ const Chat = ({ user, setUser }) => {
                                     </div>
                                 ) : (
                                     messages.map((msg, index) => {
-                                        const isMine = msg.SenderId === user.Id;
+                                        const isMine = msg.SenderId == user.Id;
                                         return (
                                             <div key={msg.Id || index} className={`message-wrapper ${isMine ? 'mine' : 'other'}`}>
                                                 <div className="message-meta" style={{flexDirection: isMine ? 'row-reverse' : 'row'}}>
                                                     <div className="chat-avatar" style={{width: '24px', height: '24px', background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', margin: 0, overflow: 'hidden'}}>
                                                         {isMine && user.AvatarUrl ? (
-                                                            <img src={`http://localhost:5000${user.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/>
+                                                            <img src={`http://${window.location.hostname}:5000${user.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/>
                                                         ) : (!isMine && (msg.AvatarUrl || selectedFriend.AvatarUrl)) ? (
-                                                            <img src={`http://localhost:5000${msg.AvatarUrl || selectedFriend.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/>
+                                                            <img src={`http://${window.location.hostname}:5000${msg.AvatarUrl || selectedFriend.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/>
                                                         ) : (
                                                             <UserIcon size={12} />
                                                         )}
@@ -787,14 +804,14 @@ const Chat = ({ user, setUser }) => {
                                                     {msg.ImageUrl ? (
                                                         <div>
                                                             {msg.Content !== 'Sent an image' && <div style={{marginBottom: '8px'}}>{msg.Content}</div>}
-                                                            <img src={`http://localhost:5000${msg.ImageUrl}`} alt="attachment" className="chat-image" />
+                                                            <img src={`http://${window.location.hostname}:5000${msg.ImageUrl}`} alt="attachment" className="chat-image" />
                                                         </div>
                                                     ) : msg.AttachmentUrl ? (
                                                         <div>
                                                             {msg.Content && <div style={{marginBottom: '8px'}}>{msg.Content}</div>}
                                                             <div style={{display: 'flex', alignItems: 'center', background: 'rgba(0,0,0,0.1)', padding: '8px', borderRadius: '8px'}}>
                                                                 <Folder size={20} style={{marginRight: '8px', color: 'var(--primary-color)'}} />
-                                                                <a href={`http://localhost:5000${msg.AttachmentUrl}`} target="_blank" rel="noopener noreferrer" style={{color: 'var(--primary-color)', textDecoration: 'none'}}>Download File</a>
+                                                                <a href={`http://${window.location.hostname}:5000${msg.AttachmentUrl}`} target="_blank" rel="noopener noreferrer" style={{color: 'var(--primary-color)', textDecoration: 'none'}}>Download File</a>
                                                             </div>
                                                         </div>
                                                     ) : (

@@ -16,7 +16,7 @@ function App() {
       if (token) {
         axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
         try {
-          const response = await axios.get('http://localhost:5000/api/auth/me');
+          const response = await axios.get(`http://${window.location.hostname}:5000/api/auth/me`);
           setUser(response.data.user);
           socket.auth = { username: response.data.user.Username, token };
           socket.connect();

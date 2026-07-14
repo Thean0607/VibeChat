@@ -661,6 +661,8 @@
   font-size: 16px;
   margin: 0;
   font-weight: 500;
+  overflow-wrap: break-word;
+  word-break: break-word;
 }
 
 .message-wrapper {

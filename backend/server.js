@@ -6,13 +6,19 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const multer = require('multer');
 const path = require('path');
+const fs = require('fs');
 require('dotenv').config();
 const { poolPromise, sql } = require('./db');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+const uploadsDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir);
+}
+app.use('/uploads', express.static(uploadsDir));
 
 // Multer Config
 const storage = multer.diskStorage({
@@ -29,10 +35,18 @@ const upload = multer({ storage: storage });
 const server = http.createServer(app);
 const io = new Server(server, {
     cors: {
-        origin: ["http://localhost:3000", "http://localhost:3001", "http://localhost:3002"],
+        origin: "*",
         methods: ["GET", "POST"]
     }
 });
+
+const { PeerServer } = require('peer');
+const peerServer = PeerServer({
+    port: 5001,
+    path: '/myapp',
+    corsOptions: { origin: '*' }
+});
+console.log('PeerJS standalone server running on port 5001');
 
 // Auto-migrate Database
 poolPromise.then(pool => {
