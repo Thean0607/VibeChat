@@ -3,10 +3,13 @@
 -- ==============================================================
 
 -- 1. TẠO DATABASE (Bỏ comment 3 dòng dưới nếu bạn chưa có Database)
--- CREATE DATABASE VibeChatDB;
--- GO
--- USE VibeChatDB;
--- GO
+IF NOT EXISTS(SELECT * FROM sys.databases WHERE name = 'VibeChatDB')
+BEGIN
+    CREATE DATABASE VibeChatDB;
+END
+GO
+USE VibeChatDB;
+GO
 
 -- ==============================================================
 -- 2. TẠO BẢNG [Users] - Lưu trữ thông tin tài khoản người dùng

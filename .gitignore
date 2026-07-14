@@ -10,3 +10,12 @@ yarn-error.log*
 .DS_Store
 dist/
 build/
+
+# Uploads
+backend/uploads/
+
+# Temporary and test scripts
+backend/*.cjs
+backend/missing_routes.js
+backend/server_old.js
+backend/get_schema.js

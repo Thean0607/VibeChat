@@ -28,6 +28,10 @@ const Login = ({ setUser }) => {
     const [linkingProvider, setLinkingProvider] = useState(null);
     const [showForgotPassword, setShowForgotPassword] = useState(false);
     const [resetEmail, setResetEmail] = useState('');
+    const [resetStep, setResetStep] = useState(1);
+    const [otp, setOtp] = useState('');
+    const [newPassword, setNewPassword] = useState('');
+
     const [resetMessage, setResetMessage] = useState('');
     
     // Additional fields for Register
@@ -68,8 +72,24 @@ const Login = ({ setUser }) => {
         try {
             const res = await axios.post(`http://${window.location.hostname}:5000/api/auth/forgot-password`, { email: resetEmail });
             setResetMessage(res.data.message);
+            setResetStep(2);
         } catch (err) {
             setResetMessage("Error sending reset link.");
+        }
+    };
+    
+    const handleResetPassword = async (e) => {
+        e.preventDefault();
+        try {
+            const res = await axios.post(`http://${window.location.hostname}:5000/api/auth/reset-password`, { email: resetEmail, OTP: otp, NewPassword: newPassword });
+            setResetMessage(res.data.message);
+            setTimeout(() => {
+                setShowForgotPassword(false);
+                setResetStep(1);
+                setResetMessage('');
+            }, 2000);
+        } catch (err) {
+            setResetMessage("Invalid OTP or error resetting password.");
         }
     };
     
@@ -151,14 +171,30 @@ const Login = ({ setUser }) => {
                             <div className="auth-header">
                                 <h2>Reset Password</h2>
                                 <p>Enter your email to receive a reset link</p>
-                                <form onSubmit={handleForgotPassword} style={{marginTop: '24px'}}>
-                                    <div className="input-group">
-                                        <input type="email" className="input-field" placeholder="Enter your email" value={resetEmail} onChange={e => setResetEmail(e.target.value)} required />
-                                    </div>
-                                    <button type="submit" className="btn-primary login-btn">Send Reset Link</button>
-                                    {resetMessage && <p style={{marginTop: '12px', color: '#22c55e', fontSize: '14px'}}>{resetMessage}</p>}
-                                    <p style={{marginTop: '16px', fontSize: '14px', cursor: 'pointer', color: 'var(--primary-color)'}} onClick={() => setShowForgotPassword(false)}>Back to Login</p>
-                                </form>
+                                
+                                {resetStep === 1 ? (
+                                    <form onSubmit={handleForgotPassword} style={{marginTop: '24px'}}>
+                                        <div className="input-group">
+                                            <input type="email" className="input-field" placeholder="Enter your email" value={resetEmail} onChange={e => setResetEmail(e.target.value)} required />
+                                        </div>
+                                        <button type="submit" className="btn-primary login-btn">Send Reset Link</button>
+                                        {resetMessage && <p style={{marginTop: '12px', color: '#22c55e', fontSize: '14px'}}>{resetMessage}</p>}
+                                        <p style={{marginTop: '16px', fontSize: '14px', cursor: 'pointer', color: 'var(--primary-color)'}} onClick={() => setShowForgotPassword(false)}>Back to Login</p>
+                                    </form>
+                                ) : (
+                                    <form onSubmit={handleResetPassword} style={{marginTop: '24px'}}>
+                                        <div className="input-group" style={{marginBottom: '16px'}}>
+                                            <input type="text" className="input-field" placeholder="Enter 6-digit OTP" value={otp} onChange={e => setOtp(e.target.value)} required />
+                                        </div>
+                                        <div className="input-group">
+                                            <input type="password" className="input-field" placeholder="Enter New Password" value={newPassword} onChange={e => setNewPassword(e.target.value)} required minLength="6" />
+                                        </div>
+                                        <button type="submit" className="btn-primary login-btn">Reset Password</button>
+                                        {resetMessage && <p style={{marginTop: '12px', color: '#22c55e', fontSize: '14px'}}>{resetMessage}</p>}
+                                        <p style={{marginTop: '16px', fontSize: '14px', cursor: 'pointer', color: 'var(--primary-color)'}} onClick={() => {setResetStep(1); setShowForgotPassword(false);}}>Cancel</p>
+                                    </form>
+                                )}
+
                             </div>
                         ) : (
                             <>
