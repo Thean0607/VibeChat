@@ -806,3 +806,21 @@
     width: 250px;
   }
 }
+
+/* Reaction and Reply Actions Hover */
+.message-actions {
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.message-content-wrapper:hover .message-actions {
+  opacity: 1;
+}
+
+.message-actions span {
+  transition: transform 0.1s ease;
+}
+
+.message-actions span:hover {
+  transform: scale(1.2);
+}

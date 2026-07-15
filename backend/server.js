@@ -138,6 +138,7 @@ async function initDb() {
             END
             ELSE
             BEGIN
+                ALTER TABLE Messages ALTER COLUMN ReceiverId INT NULL;
                 IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[Messages]') AND name = 'ReceiverId')
                 BEGIN
                     ALTER TABLE Messages ADD ReceiverId INT NULL;
@@ -823,6 +824,15 @@ io.on('connection', (socket) => {
         console.log(`User ${socket.user?.Username} joined group ${groupId}`);
     });
     
+    socket.on('joinGroups', (groupIds) => {
+        if (Array.isArray(groupIds)) {
+            groupIds.forEach(groupId => {
+                socket.join(`group_${groupId}`);
+                console.log(`User ${socket.user?.Username} joined group ${groupId}`);
+            });
+        }
+    });
+    
     socket.on('leaveGroup', (groupId) => {
         socket.leave(`group_${groupId}`);
         console.log(`User ${socket.user?.Username} left group ${groupId}`);
@@ -1057,12 +1067,14 @@ app.get('/api/link-preview', authenticateToken, async (req, res) => {
 // RESTORED MISSING ROUTES
 // ==========================================
 app.get('/api/messages', authenticateToken, async (req, res) => {
-    const { user1, user2, groupId } = req.query;
+    const { user1, user2, groupId, limit, beforeId } = req.query;
+    const fetchLimit = limit ? parseInt(limit) : 20;
     try {
         const pool = await poolPromise;
         const request = pool.request();
+        request.input('limit', sql.Int, fetchLimit);
         let query = `
-            SELECT m.Id, m.Content, m.ImageUrl, m.AttachmentUrl, m.CreatedAt, 
+            SELECT TOP (@limit) m.Id, m.Content, m.ImageUrl, m.AttachmentUrl, m.CreatedAt, 
                    u.Username, u.FullName, u.AvatarUrl, m.SenderId, m.ReceiverId, m.GroupId,
                    m.ReplyToMessageId, m.IsPinned, m.IsEdited,
                    (
@@ -1074,25 +1086,31 @@ app.get('/api/messages', authenticateToken, async (req, res) => {
                    ) as Reactions
             FROM Messages m
             JOIN Users u ON m.SenderId = u.Id
+            WHERE 1=1
         `;
         
         if (groupId) {
-            query += ` WHERE m.GroupId = @groupId `;
+            query += ` AND m.GroupId = @groupId `;
             request.input('groupId', sql.Int, groupId);
         } else if (user1 && user2) {
-            query += ` WHERE (m.SenderId = @user1 AND m.ReceiverId = @user2 AND m.GroupId IS NULL) 
-                          OR (m.SenderId = @user2 AND m.ReceiverId = @user1 AND m.GroupId IS NULL) `;
+            query += ` AND ((m.SenderId = @user1 AND m.ReceiverId = @user2 AND m.GroupId IS NULL) 
+                          OR (m.SenderId = @user2 AND m.ReceiverId = @user1 AND m.GroupId IS NULL)) `;
             request.input('user1', sql.Int, user1);
             request.input('user2', sql.Int, user2);
         }
         
-        query += ` ORDER BY m.CreatedAt ASC `;
+        if (beforeId) {
+            query += ` AND m.Id < @beforeId `;
+            request.input('beforeId', sql.Int, beforeId);
+        }
+        
+        query += ` ORDER BY m.Id DESC `;
         
         const result = await request.query(query);
         const messages = result.recordset.map(msg => ({
             ...msg,
             Reactions: msg.Reactions ? JSON.parse(msg.Reactions) : []
-        }));
+        })).reverse();
         res.json(messages);
     } catch (err) {
         console.error(err);

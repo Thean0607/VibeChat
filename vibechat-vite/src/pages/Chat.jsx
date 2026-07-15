@@ -44,6 +44,9 @@ const Chat = ({ user, setUser }) => {
 
     const [replyingTo, setReplyingTo] = useState(null);
     const [hoveredMessageId, setHoveredMessageId] = useState(null);
+    const [hasMore, setHasMore] = useState(true);
+    const [isLoadingMore, setIsLoadingMore] = useState(false);
+    const messagesAreaRef = useRef(null);
 
     const [isCreateGroupModalOpen, setIsCreateGroupModalOpen] = useState(false);
     const [newGroupName, setNewGroupName] = useState('');
@@ -179,22 +182,64 @@ const Chat = ({ user, setUser }) => {
     // Messages
     useEffect(() => {
         if (!selectedFriend || !user) return;
+        setMessages([]);
+        setHasMore(true);
         const fetchMessages = async () => {
             try {
-                let url = `http://${window.location.hostname}:5000/api/messages?`;
+                let url = `http://${window.location.hostname}:5000/api/messages?limit=20&`;
                 if (selectedFriend.IsGroup) {
                     url += `groupId=${selectedFriend.Id}`;
                 } else {
                     url += `user1=${user.Id}&user2=${selectedFriend.Id}`;
                 }
-                const response = await axios.get(url);
+                const response = await axios.get(url, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
                 setMessages(response.data);
+                if (response.data.length < 20) setHasMore(false);
             } catch (err) {
                 console.error("Failed to fetch messages", err);
             }
         };
         fetchMessages();
     }, [selectedFriend, user]);
+
+    const handleScroll = async () => {
+        if (!messagesAreaRef.current || isLoadingMore || !hasMore || messages.length === 0) return;
+        
+        if (messagesAreaRef.current.scrollTop === 0) {
+            setIsLoadingMore(true);
+            const oldestMessageId = messages[0].Id;
+            const previousScrollHeight = messagesAreaRef.current.scrollHeight;
+            
+            try {
+                let url = `http://${window.location.hostname}:5000/api/messages?limit=20&beforeId=${oldestMessageId}&`;
+                if (selectedFriend.IsGroup) {
+                    url += `groupId=${selectedFriend.Id}`;
+                } else {
+                    url += `user1=${user.Id}&user2=${selectedFriend.Id}`;
+                }
+                const response = await axios.get(url, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
+                
+                if (response.data.length < 20) {
+                    setHasMore(false);
+                }
+                
+                if (response.data.length > 0) {
+                    setMessages(prev => [...response.data, ...prev]);
+                    // Restore scroll position
+                    requestAnimationFrame(() => {
+                        if (messagesAreaRef.current) {
+                            const newScrollHeight = messagesAreaRef.current.scrollHeight;
+                            messagesAreaRef.current.scrollTop = newScrollHeight - previousScrollHeight;
+                        }
+                    });
+                }
+            } catch (err) {
+                console.error("Failed to fetch older messages", err);
+            } finally {
+                setIsLoadingMore(false);
+            }
+        }
+    };
 
     const playNotificationSound = () => {
         if (localStorage.getItem('soundEnabled') === 'false') return;
@@ -322,7 +367,16 @@ const Chat = ({ user, setUser }) => {
             await axios.post(`http://${window.location.hostname}:5000/api/messages/${msgId}/react`, { reactionType: type }, {
                 headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
             });
-            fetchMessages(); // Refresh to get reactions
+            
+            // Fetch updated messages
+            let url = `http://${window.location.hostname}:5000/api/messages?`;
+            if (selectedFriend.IsGroup) {
+                url += `groupId=${selectedFriend.Id}`;
+            } else {
+                url += `user1=${user.Id}&user2=${selectedFriend.Id}`;
+            }
+            const response = await axios.get(url, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
+            setMessages(response.data);
         } catch (err) { console.error('Error reacting', err); }
     };
     
@@ -1020,13 +1074,22 @@ const handleMessageChange = (e) => {
                                     </div>
                                 </div>
                                 <div className="header-actions">
-                                    <MonitorUp size={20} style={{cursor: 'pointer', marginRight: '12px', color: 'var(--text-secondary)'}} title={getText('shareScreen')} onClick={() => initiateCall('screen')} />
-                                    <Video size={20} style={{cursor: 'pointer', marginRight: '12px', color: 'var(--text-secondary)'}} title={getText('videoCall')} onClick={() => initiateCall('video')} />
-                                                                        <Phone size={20} style={{cursor: 'pointer', marginRight: '12px', color: 'var(--text-secondary)'}} title={getText('audioCall')} onClick={() => initiateCall('audio')} />
+                                    {!selectedFriend.IsGroup && (
+                                        <>
+                                            <MonitorUp size={20} style={{cursor: 'pointer', marginRight: '12px', color: 'var(--text-secondary)'}} title={getText('shareScreen')} onClick={() => initiateCall('screen')} />
+                                            <Video size={20} style={{cursor: 'pointer', marginRight: '12px', color: 'var(--text-secondary)'}} title={getText('videoCall')} onClick={() => initiateCall('video')} />
+                                            <Phone size={20} style={{cursor: 'pointer', marginRight: '12px', color: 'var(--text-secondary)'}} title={getText('audioCall')} onClick={() => initiateCall('audio')} />
+                                        </>
+                                    )}
                                 </div>
                             </header>
 
-                            <div className="messages-area">
+                            <div className="messages-area" ref={messagesAreaRef} onScroll={handleScroll}>
+                                {isLoadingMore && (
+                                    <div style={{textAlign: 'center', padding: '10px', color: 'var(--text-secondary)', fontSize: '12px'}}>
+                                        Loading older messages...
+                                    </div>
+                                )}
                                 {messages.length === 0 ? (
                                     <div style={{height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)'}}>
                                         <p>{getText('noMessages')}</p>
@@ -1051,35 +1114,63 @@ const handleMessageChange = (e) => {
                                                     <span>{isMine ? getText('you') : (msg.FullName || msg.Username || selectedFriend.FullName || selectedFriend.Username)}</span>
                                                     <span style={{fontSize: '11px'}}>{new Date(msg.CreatedAt || Date.now()).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
                                                 </div>
-                                                <div className="message-bubble">
-                                                    {msg.ImageUrl ? (
-                                                        <div>
-                                                            
-                                                            {msg.Content !== 'Sent an image' && msg.Content !== '' && (
-                                                                <div style={{marginBottom: '8px'}}>
-                                                                    {msg.Content}
-                                                                    {msg.Content.match(/https?:\/\/[^\s]+/) && (
-                                                                        <LinkPreview url={msg.Content.match(/https?:\/\/[^\s]+/)[0]} />
+                                                <div className="message-content-wrapper" style={{display: 'flex', flexDirection: 'column', alignItems: isMine ? 'flex-end' : 'flex-start'}}>
+                                                    {msg.ReplyToMessageId && (() => {
+                                                        const repliedMsg = messages.find(m => m.Id == msg.ReplyToMessageId);
+                                                        if (repliedMsg) {
+                                                            return (
+                                                                <div style={{fontSize: '12px', color: 'var(--text-secondary)', background: 'var(--bg-secondary)', padding: '4px 8px', borderRadius: '4px', marginBottom: '4px', maxWidth: '100%', opacity: 0.8, borderLeft: `3px solid var(--primary-color)`}}>
+                                                                    <strong>{repliedMsg.Username || repliedMsg.FullName}:</strong> {repliedMsg.Content ? (repliedMsg.Content.length > 30 ? repliedMsg.Content.substring(0, 30) + '...' : repliedMsg.Content) : 'Media'}
+                                                                </div>
+                                                            );
+                                                        }
+                                                        return null;
+                                                    })()}
+                                                    <div style={{display: 'flex', flexDirection: isMine ? 'row-reverse' : 'row', alignItems: 'center'}}>
+                                                        <div className="message-bubble">
+                                                            {msg.ImageUrl ? (
+                                                                <div>
+                                                                    
+                                                                    {msg.Content !== 'Sent an image' && msg.Content !== '' && (
+                                                                        <div style={{marginBottom: '8px'}}>
+                                                                            {msg.Content}
+                                                                            {msg.Content.match(/https?:\/\/[^\s]+/) && (
+                                                                                <LinkPreview url={msg.Content.match(/https?:\/\/[^\s]+/)[0]} />
+                                                                            )}
+                                                                        </div>
+                                                                    )}
+
+                                                                    <img src={msg.ImageUrl.startsWith('http') ? msg.ImageUrl : `http://${window.location.hostname}:5000${msg.ImageUrl}`} alt="attachment" className="chat-image" />
+                                                                </div>
+                                                            ) : msg.AttachmentUrl ? (
+                                                                <div>
+                                                                    {msg.Content && <div style={{marginBottom: '8px'}}>{msg.Content}</div>}
+                                                                    {msg.AttachmentUrl.endsWith('.webm') ? (
+                                                                        <audio controls src={msg.AttachmentUrl.startsWith('http') ? msg.AttachmentUrl : `http://${window.location.hostname}:5000${msg.AttachmentUrl}`} style={{maxWidth: '200px'}} />
+                                                                    ) : (
+                                                                        <div style={{display: 'flex', alignItems: 'center', background: 'rgba(0,0,0,0.1)', padding: '8px', borderRadius: '8px'}}>
+                                                                            <Folder size={20} style={{marginRight: '8px', color: 'var(--primary-color)'}} />
+                                                                            <a href={`http://${window.location.hostname}:5000${msg.AttachmentUrl}`} target="_blank" rel="noopener noreferrer" style={{color: 'var(--primary-color)', textDecoration: 'none'}}>{getText('downloadFile')}</a>
+                                                                        </div>
                                                                     )}
                                                                 </div>
-                                                            )}
-
-                                                            <img src={msg.ImageUrl.startsWith('http') ? msg.ImageUrl : `http://${window.location.hostname}:5000${msg.ImageUrl}`} alt="attachment" className="chat-image" />
-                                                        </div>
-                                                    ) : msg.AttachmentUrl ? (
-                                                        <div>
-                                                            {msg.Content && <div style={{marginBottom: '8px'}}>{msg.Content}</div>}
-                                                            {msg.AttachmentUrl.endsWith('.webm') ? (
-                                                                <audio controls src={msg.AttachmentUrl.startsWith('http') ? msg.AttachmentUrl : `http://${window.location.hostname}:5000${msg.AttachmentUrl}`} style={{maxWidth: '200px'}} />
                                                             ) : (
-                                                                <div style={{display: 'flex', alignItems: 'center', background: 'rgba(0,0,0,0.1)', padding: '8px', borderRadius: '8px'}}>
-                                                                    <Folder size={20} style={{marginRight: '8px', color: 'var(--primary-color)'}} />
-                                                                    <a href={`http://${window.location.hostname}:5000${msg.AttachmentUrl}`} target="_blank" rel="noopener noreferrer" style={{color: 'var(--primary-color)', textDecoration: 'none'}}>{getText('downloadFile')}</a>
-                                                                </div>
+                                                                msg.Content
                                                             )}
                                                         </div>
-                                                    ) : (
-                                                        msg.Content
+                                                        <div className="message-actions" style={{display: 'flex', gap: '8px', padding: '0 8px'}}>
+                                                            <span style={{cursor: 'pointer', fontSize: '14px'}} onClick={() => setReplyingTo(msg)} title="Reply">↩️</span>
+                                                            <span style={{cursor: 'pointer', fontSize: '14px'}} onClick={() => handleReact(msg.Id, '❤️')} title="Love">❤️</span>
+                                                            <span style={{cursor: 'pointer', fontSize: '14px'}} onClick={() => handleReact(msg.Id, '👍')} title="Like">👍</span>
+                                                            <span style={{cursor: 'pointer', fontSize: '14px'}} onClick={() => handleReact(msg.Id, '😂')} title="Haha">😂</span>
+                                                        </div>
+                                                    </div>
+                                                    {msg.Reactions && msg.Reactions.length > 0 && (
+                                                        <div style={{display: 'flex', gap: '4px', marginTop: '4px', background: 'var(--bg-secondary)', padding: '2px 8px', borderRadius: '12px', fontSize: '12px', border: '1px solid var(--border-color)', alignSelf: isMine ? 'flex-end' : 'flex-start'}}>
+                                                            {msg.Reactions.map((r, i) => (
+                                                                <span key={i} title={r.Username} style={{cursor: 'pointer'}} onClick={() => handleReact(msg.Id, r.Reaction)}>{r.Reaction}</span>
+                                                            ))}
+                                                        </div>
                                                     )}
                                                 </div>
                                                 {isMine && (
@@ -1186,16 +1277,18 @@ const handleMessageChange = (e) => {
                             </p>
                         </div>
 
-                        <div className="details-actions-row">
-                            <div className="details-action-btn" onClick={() => initiateCall('audio')}>
-                                <Phone size={20} />
-                                <span>{getText("audioCall")}</span>
+                        {!selectedFriend.IsGroup && (
+                            <div className="details-actions-row">
+                                <div className="details-action-btn" onClick={() => initiateCall('audio')}>
+                                    <Phone size={20} />
+                                    <span>{getText("audioCall")}</span>
+                                </div>
+                                <div className="details-action-btn" onClick={() => initiateCall('video')}>
+                                    <Video size={20} />
+                                    <span>{getText("videoCall")}</span>
+                                </div>
                             </div>
-                            <div className="details-action-btn" onClick={() => initiateCall('video')}>
-                                <Video size={20} />
-                                <span>{getText("videoCall")}</span>
-                            </div>
-                        </div>
+                        )}
 
                         <div className="details-section">
                             <div className="details-menu-item" onClick={handleMuteUser}>
