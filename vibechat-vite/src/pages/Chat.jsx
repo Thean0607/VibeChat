@@ -461,7 +461,7 @@ const handleMessageChange = (e) => {
         formData.append('image', file);
 
         try {
-            const response = await axios.post(`http://${window.location.hostname}:5000/api/upload/image`, formData, {
+            const response = await axios.post(`http://${window.location.hostname}:5000/api/messages/image`, formData, {
                 headers: { 'Content-Type': 'multipart/form-data', 'Authorization': `Bearer ${localStorage.getItem('token')}` }
             });
             
@@ -488,7 +488,7 @@ const handleMessageChange = (e) => {
         formData.append('file', file);
 
         try {
-            const response = await axios.post(`http://${window.location.hostname}:5000/api/upload/document`, formData, {
+            const response = await axios.post(`http://${window.location.hostname}:5000/api/messages/file`, formData, {
                 headers: { 'Content-Type': 'multipart/form-data', 'Authorization': `Bearer ${localStorage.getItem('token')}` }
             });
             
@@ -525,10 +525,10 @@ const handleMessageChange = (e) => {
                 mediaRecorder.onstop = async () => {
                     const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
                     const formData = new FormData();
-                    formData.append('audio', audioBlob, 'voice.webm');
+                    formData.append('file', audioBlob, 'voice.webm');
 
                     try {
-                        const res = await axios.post(`http://${window.location.hostname}:5000/api/upload/audio`, formData, {
+                        const res = await axios.post(`http://${window.location.hostname}:5000/api/messages/file`, formData, {
                             headers: { 'Content-Type': 'multipart/form-data', 'Authorization': `Bearer ${localStorage.getItem('token')}` }
                         });
                         socket.emit('sendFileMessage', {

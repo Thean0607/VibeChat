@@ -117,9 +117,14 @@ async function initDb() {
                 CREATE TABLE Messages (
                     Id INT IDENTITY(1,1) PRIMARY KEY,
                     SenderId INT NOT NULL,
-                    ReceiverId INT NOT NULL,
+                    ReceiverId INT NULL,
+                    GroupId INT NULL,
                     Content NVARCHAR(MAX) NOT NULL,
+                    ImageUrl NVARCHAR(MAX) NULL,
                     AttachmentUrl NVARCHAR(500) NULL,
+                    ReplyToMessageId INT NULL,
+                    IsPinned BIT DEFAULT 0,
+                    IsEdited BIT DEFAULT 0,
                     IsRead BIT DEFAULT 0,
                     ReadAt DATETIME NULL,
                     IsDeleted BIT DEFAULT 0,
@@ -138,8 +143,16 @@ async function initDb() {
                     ALTER TABLE Messages ADD ReceiverId INT NULL;
                     ALTER TABLE Messages ADD CONSTRAINT FK_Messages_Receiver FOREIGN KEY (ReceiverId) REFERENCES Users(Id);
                 END
+                IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[Messages]') AND name = 'GroupId')
+                    ALTER TABLE Messages ADD GroupId INT NULL;
                 IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[Messages]') AND name = 'AttachmentUrl')
                     ALTER TABLE Messages ADD AttachmentUrl NVARCHAR(500) NULL;
+                IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[Messages]') AND name = 'ReplyToMessageId')
+                    ALTER TABLE Messages ADD ReplyToMessageId INT NULL;
+                IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[Messages]') AND name = 'IsPinned')
+                    ALTER TABLE Messages ADD IsPinned BIT DEFAULT 0;
+                IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[Messages]') AND name = 'IsEdited')
+                    ALTER TABLE Messages ADD IsEdited BIT DEFAULT 0;
                 IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[Messages]') AND name = 'IsRead')
                     ALTER TABLE Messages ADD IsRead BIT DEFAULT 0;
             END
@@ -177,6 +190,53 @@ async function initDb() {
                     IsCompleted BIT DEFAULT 0,
                     CreatedAt DATETIME DEFAULT GETDATE(),
                     CONSTRAINT FK_Tasks_User FOREIGN KEY (UserId) REFERENCES Users(Id) ON DELETE CASCADE
+                );
+            END
+        `);
+        
+        // Create Groups table
+        await pool.request().query(`
+            IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='Groups' and xtype='U')
+            BEGIN
+                CREATE TABLE Groups (
+                    Id INT IDENTITY(1,1) PRIMARY KEY,
+                    Name NVARCHAR(255) NOT NULL,
+                    AvatarUrl NVARCHAR(500) NULL,
+                    AdminId INT NOT NULL,
+                    CreatedAt DATETIME DEFAULT GETDATE(),
+                    CONSTRAINT FK_Groups_Admin FOREIGN KEY (AdminId) REFERENCES Users(Id)
+                );
+            END
+        `);
+
+        // Create GroupMembers table
+        await pool.request().query(`
+            IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='GroupMembers' and xtype='U')
+            BEGIN
+                CREATE TABLE GroupMembers (
+                    GroupId INT NOT NULL,
+                    UserId INT NOT NULL,
+                    Role NVARCHAR(50) DEFAULT 'member',
+                    JoinedAt DATETIME DEFAULT GETDATE(),
+                    PRIMARY KEY (GroupId, UserId),
+                    CONSTRAINT FK_GroupMembers_Group FOREIGN KEY (GroupId) REFERENCES Groups(Id) ON DELETE CASCADE,
+                    CONSTRAINT FK_GroupMembers_User FOREIGN KEY (UserId) REFERENCES Users(Id)
+                );
+            END
+        `);
+
+        // Create MessageReactions table
+        await pool.request().query(`
+            IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='MessageReactions' and xtype='U')
+            BEGIN
+                CREATE TABLE MessageReactions (
+                    MessageId INT NOT NULL,
+                    UserId INT NOT NULL,
+                    ReactionType NVARCHAR(50) NOT NULL,
+                    CreatedAt DATETIME DEFAULT GETDATE(),
+                    PRIMARY KEY (MessageId, UserId),
+                    CONSTRAINT FK_MessageReactions_Message FOREIGN KEY (MessageId) REFERENCES Messages(Id) ON DELETE CASCADE,
+                    CONSTRAINT FK_MessageReactions_User FOREIGN KEY (UserId) REFERENCES Users(Id)
                 );
             END
         `);
