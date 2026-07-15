@@ -794,16 +794,180 @@
   background: rgba(0,0,0,0.1);
 }
 
+/* Mobile Back Button styling */
+.mobile-back-btn {
+  display: none;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  cursor: pointer;
+  padding: 8px;
+  margin-right: 8px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: background 0.2s;
+}
+.mobile-back-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
 /* Responsive Layout */
 @media (max-width: 1200px) {
-  .widgets-pane {
-    display: none;
+  .widgets-pane, .conversation-details-pane {
+    display: none !important;
   }
 }
 
-@media (max-width: 800px) {
+@media (max-width: 768px) {
+  .app-container {
+    padding: 0;
+    height: 100vh;
+    width: 100%;
+  }
+
+  .main-layout {
+    border-radius: 0;
+    border: none;
+    height: 100%;
+    max-width: 100%;
+    flex-direction: column-reverse; /* Position sidebar-nav at the bottom! */
+  }
+
+  /* Bottom Tab Bar */
+  .sidebar-nav {
+    width: 100% !important;
+    height: 60px !important;
+    min-height: 60px !important;
+    flex-direction: row !important;
+    justify-content: space-around !important;
+    align-items: center !important;
+    padding: 0 16px !important;
+    border-right: none !important;
+    border-top: 1px solid var(--glass-border) !important;
+    background: rgba(20, 20, 25, 0.9) !important; /* Slightly darker glass for bottom nav */
+    backdrop-filter: blur(10px) !important;
+    -webkit-backdrop-filter: blur(10px) !important;
+    z-index: 10;
+  }
+
+  .nav-avatar {
+    margin-bottom: 0 !important;
+    width: 32px !important;
+    height: 32px !important;
+    order: 5; /* profile avatar at the rightmost end */
+  }
+
+  .nav-items {
+    flex-direction: row !important;
+    gap: 0 !important;
+    justify-content: space-around !important;
+    align-items: center !important;
+    flex: 1 !important;
+    max-width: 70%;
+  }
+
+  .nav-bottom {
+    flex-direction: row !important;
+    gap: 20px !important;
+    margin-top: 0 !important;
+    align-items: center !important;
+  }
+
+  .nav-item {
+    width: 42px !important;
+    height: 42px !important;
+  }
+
+  /* Pane toggles based on active chat */
+  .main-layout.has-active-chat .sidebar-nav {
+    display: none !important; /* Hide navigation bar when chatting */
+  }
+
+  .main-layout.has-active-chat .chat-list-pane {
+    display: none !important; /* Hide list pane when chatting */
+  }
+
+  .main-layout.has-active-chat .main-chat-pane {
+    display: flex !important; /* Show chat pane when chatting */
+    width: 100% !important;
+    height: 100% !important;
+  }
+
+  .main-layout:not(.has-active-chat) .main-chat-pane {
+    display: none !important; /* Hide chat pane when not chatting */
+  }
+
+  .main-layout:not(.has-active-chat) .chat-list-pane {
+    display: flex !important; /* Show list pane when not chatting */
+    width: 100% !important;
+    height: calc(100% - 60px) !important; /* Leave room for bottom bar */
+  }
+
   .chat-list-pane {
-    width: 250px;
+    padding: 16px !important;
+    border-right: none !important;
+  }
+
+  .chat-list-header h2 {
+    font-size: 22px;
+    margin-bottom: 16px;
+  }
+
+  .mobile-back-btn {
+    display: flex;
+  }
+
+  .main-chat-header {
+    padding: 12px 16px !important;
+  }
+
+  .header-user-text h3 {
+    font-size: 17px;
+  }
+
+  .messages-area {
+    padding: 16px !important;
+    gap: 16px !important;
+  }
+
+  .message-wrapper {
+    max-width: 85% !important;
+  }
+
+  .message-bubble {
+    padding: 10px 14px !important;
+    font-size: 14px !important;
+  }
+
+  .input-area-container {
+    padding: 0 12px 12px 12px !important;
+  }
+
+  .input-box {
+    border-radius: 16px !important;
+  }
+
+  .input-main {
+    padding: 8px 12px !important;
+  }
+
+  .input-main input {
+    font-size: 14px !important;
+    padding: 0 8px !important;
+  }
+
+  .btn-send {
+    width: 34px !important;
+    height: 34px !important;
+  }
+
+  .profile-container {
+    padding: 20px 12px !important;
+  }
+
+  .profile-info {
+    padding: 16px !important;
   }
 }
 

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { socket } from '../socket';
 import { 
-    LogOut, User as UserIcon, MessageSquare, Users, 
+    LogOut, User as UserIcon, MessageSquare, Users, ArrowLeft,
     Settings, Search, 
     Home, Video, Menu, CheckCheck, Phone, MonitorUp, Paperclip, Folder, Smile, Plus, Bold, Code, List, Camera, Mic, Sticker, ChevronDown, Edit2,
     BellOff, Ban, Trash2, ChevronRight, FileText, Link, Image as ImageIcon
@@ -1022,7 +1022,7 @@ const handleMessageChange = (e) => {
 
     return (
         <div className="app-container">
-            <div className="main-layout">
+            <div className={`main-layout ${selectedFriend ? 'has-active-chat' : ''}`}>
                 {/* COLUMN 1: SIDEBAR NAV */}
                 <nav className="sidebar-nav">
                     <div className="nav-avatar" style={{background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', overflow: 'hidden', cursor: 'pointer'}} onClick={() => setActiveTab('profile')}>
@@ -1061,6 +1061,9 @@ const handleMessageChange = (e) => {
                         <>
                             <header className="main-chat-header">
                                 <div className="header-user-info">
+                                    <button className="mobile-back-btn" onClick={() => setSelectedFriend(null)} title="Back">
+                                        <ArrowLeft size={20} />
+                                    </button>
                                     <div className="chat-avatar" style={{background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', overflow: 'hidden'}}>
                                         {selectedFriend.AvatarUrl ? <img src={`http://${window.location.hostname}:5000${selectedFriend.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : <UserIcon size={24} />}
                                     </div>

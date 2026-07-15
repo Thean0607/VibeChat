@@ -295,3 +295,27 @@
     gap: 16px;
   }
 }
+
+@media (max-width: 480px) {
+  .landing-container {
+    padding: 16px;
+  }
+  
+  .auth-panel {
+    padding: 24px 16px;
+    border-radius: 16px;
+  }
+  
+  .logo-text {
+    font-size: 32px;
+  }
+  
+  .landing-intro h2 {
+    font-size: 24px;
+    margin-bottom: 12px;
+  }
+  
+  .landing-intro p {
+    font-size: 15px;
+  }
+}
