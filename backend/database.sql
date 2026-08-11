@@ -31,6 +31,9 @@ BEGIN
         Status NVARCHAR(50) DEFAULT 'offline', -- 'online', 'offline', 'away'
         LastLogin DATETIME NULL,
         
+        ResetToken NVARCHAR(255) NULL,
+        ResetTokenExpiry DATETIME NULL,
+
         IsActive BIT DEFAULT 1, -- Xóa mềm (Soft Delete)
         CreatedAt DATETIME DEFAULT GETDATE(),
         UpdatedAt DATETIME DEFAULT GETDATE()
@@ -56,6 +59,8 @@ BEGIN
         Content NVARCHAR(MAX) NOT NULL,
         
         AttachmentUrl NVARCHAR(500) NULL, -- Cho phép gửi ảnh/file
+        IsDelivered BIT DEFAULT 0,
+        DeliveredAt DATETIME NULL,
         IsRead BIT DEFAULT 0,
         ReadAt DATETIME NULL,
         
@@ -104,5 +109,25 @@ BEGIN
     CREATE NONCLUSTERED INDEX IX_Friendships_Addressee ON Friendships(AddresseeId);
     
     PRINT 'Đã tạo bảng [Friendships] thành công.';
+END
+GO
+
+-- ==============================================================
+-- 5. TẠO BẢNG [ArchivedChats] - Lưu trữ trạng thái lưu trữ tin nhắn
+-- ==============================================================
+IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='ArchivedChats' and xtype='U')
+BEGIN
+    CREATE TABLE ArchivedChats (
+        Id INT IDENTITY(1,1) PRIMARY KEY,
+        UserId INT NOT NULL,
+        FriendId INT NOT NULL,
+        ArchivedAt DATETIME DEFAULT GETDATE(),
+        
+        CONSTRAINT FK_ArchivedChats_User FOREIGN KEY (UserId) REFERENCES Users(Id) ON DELETE CASCADE,
+        CONSTRAINT FK_ArchivedChats_Friend FOREIGN KEY (FriendId) REFERENCES Users(Id) ON DELETE NO ACTION,
+        CONSTRAINT UQ_ArchivedChats UNIQUE (UserId, FriendId)
+    );
+    
+    PRINT 'Đã tạo bảng [ArchivedChats] thành công.';
 END
 GO
