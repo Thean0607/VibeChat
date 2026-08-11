@@ -4,9 +4,10 @@ import axios from 'axios';
 import { socket } from '../socket';
 import { 
     LogOut, User as UserIcon, MessageSquare, Users, ArrowLeft,
-    Settings, Search, 
-    Home, Video, Menu, CheckCheck, Phone, MonitorUp, Paperclip, Folder, Smile, Plus, Bold, Code, List, Camera, Mic, Sticker, ChevronDown, Edit2,
-    BellOff, Ban, Trash2, ChevronRight, FileText, Link, Image as ImageIcon
+    Settings, Search, Shield, Accessibility, HelpCircle, AlertTriangle,
+    Home, Video, Menu, CheckCheck, Check, Phone, MonitorUp, Paperclip, Folder, Smile, Plus, Bold, Code, List, Camera, Mic, Sticker, ChevronDown, Edit2,
+    BellOff, Ban, Trash2, ChevronRight, FileText, Link, Image as ImageIcon,
+    Bell, Moon, Circle, X, UserCheck, Archive, MoreHorizontal, Info
 } from 'lucide-react';
 import EmojiPicker from 'emoji-picker-react';
 import Peer from 'peerjs';
@@ -28,7 +29,8 @@ const Chat = ({ user, setUser }) => {
     
     // Profile Edit State
     const [isEditingProfile, setIsEditingProfile] = useState(false);
-    const [editProfileData, setEditProfileData] = useState({ FullName: '', Bio: '' });
+    const [editProfileData, setEditProfileData] = useState({ FullName: '', Bio: '', Username: '', Email: '', DateOfBirth: '', Password: '' });
+    const [editProfileError, setEditProfileError] = useState('');
 
     const t = {
         English: { conversation: "Conversation", muteNotif: "Mute Notification", blockUser: "Block User", deleteChat: "Delete Chat", searchMessages: "SEARCH MESSAGES", searchDots: "Search...", sharedMedia: "SHARED MEDIA", viewAll: "View all", settings: "Settings", darkMode: "Dark Mode", soundNotif: "Sound Notifications", showOnline: "Show Online Status", lang: "Language", changePwd: "Change Password", logOut: "Log Out", oldPwd: "Old Password", newPwd: "New Password", confirmPwd: "Confirm New Password", update: "Update", cancel: "Cancel", home: "Home", chats: "Chats", people: "People", chatList: "Chat List", search: "Search", allChats: "All Chats", clickToView: "Click to view messages", selectChat: "Select a chat", selectChatDesc: "Choose a friend from the left panel to start messaging.", typeMessage: "Type a message...", send: "Send", voiceMsg: "Voice message", cancelMsg: "Cancel", sendFile: "Send file", sendVoice: "Send voice message", welcome: "Welcome Home", homeDesc: "Your dashboard is empty right now.", online: "Online", offline: "Offline", typing: "Typing", shareScreen: "Share Screen", videoCall: "Video Call", audioCall: "Audio Call", noMessages: "No messages yet. Say hi!", you: "You", downloadFile: "Download File", read: "Read", attachImage: "Attach Image", attachDoc: "Attach Document", record: "Hold/Click to Record" },
@@ -38,8 +40,7 @@ const Chat = ({ user, setUser }) => {
     const getText = (key) => t[language]?.[key] || t['English'][key];
     const [isRecording, setIsRecording] = useState(false);
     const [showStickerPicker, setShowStickerPicker] = useState(false);
-    const [groups, setGroups] = useState([]);
-    const [isOffline, setIsOffline] = useState(!navigator.onLine);
+
 
 
     const [replyingTo, setReplyingTo] = useState(null);
@@ -48,9 +49,7 @@ const Chat = ({ user, setUser }) => {
     const [isLoadingMore, setIsLoadingMore] = useState(false);
     const messagesAreaRef = useRef(null);
 
-    const [isCreateGroupModalOpen, setIsCreateGroupModalOpen] = useState(false);
-    const [newGroupName, setNewGroupName] = useState('');
-    const [newGroupMembers, setNewGroupMembers] = useState([]);
+
 
     const mediaRecorderRef = useRef(null);
     const audioChunksRef = useRef([]);
@@ -75,6 +74,7 @@ const Chat = ({ user, setUser }) => {
     const [incomingCall, setIncomingCall] = useState(null);
     // eslint-disable-next-line no-unused-vars
     const [isCalling, setIsCalling] = useState(false);
+    const [peopleSubTab, setPeopleSubTab] = useState('friends');
 
     // WebRTC State
     const [peer, setPeer] = useState(null);
@@ -89,12 +89,30 @@ const Chat = ({ user, setUser }) => {
     const [changePasswordMsg, setChangePasswordMsg] = useState('');
     const [showPasswordModal, setShowPasswordModal] = useState(false);
     
+    const [showProfileMenu, setShowProfileMenu] = useState(false);
+    const [showSettingsModal, setShowSettingsModal] = useState(false);
+    const [showPolicyModal, setShowPolicyModal] = useState(false);
+    const [showBlockedModal, setShowBlockedModal] = useState(false);
+    const [showAccountDetails, setShowAccountDetails] = useState(false);
+    const [policyType, setPolicyType] = useState('');
+    const profileMenuRef = useRef(null);
+    
     const messagesEndRef = useRef(null);
     const typingTimeoutRef = useRef(null);
     const myVideoRef = useRef(null);
     const remoteVideoRef = useRef(null);
     const currentCallRef = useRef(null);
     const navigate = useNavigate();
+
+    useEffect(() => {
+        function handleClickOutside(event) {
+            if (profileMenuRef.current && !profileMenuRef.current.contains(event.target)) {
+                setShowProfileMenu(false);
+            }
+        }
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => document.removeEventListener("mousedown", handleClickOutside);
+    }, []);
 
     useEffect(() => {
         localStorage.setItem('isDarkMode', isDarkMode);
@@ -139,6 +157,14 @@ const Chat = ({ user, setUser }) => {
         fetchTasks();
     }, [user, navigate, fetchFriends, fetchTasks]);
 
+    // Auto-select first chat for desktop users
+    useEffect(() => {
+        const activeFriends = friendsList.filter(f => f.Status === 'accepted' && f.IsArchived !== 1);
+        if (activeTab === 'chats' && activeFriends.length > 0 && !selectedFriend && window.innerWidth > 768) {
+            handleSelectFriend(activeFriends[0]);
+        }
+    }, [friendsList, activeTab, selectedFriend]);
+
     // Handle search users
     useEffect(() => {
         if (activeTab === 'people') {
@@ -161,7 +187,8 @@ const Chat = ({ user, setUser }) => {
                 requesterId: user.Id,
                 addresseeId
             });
-            setSearchResults(prev => prev.map(u => u.Id === addresseeId ? { ...u, Status: 'pending' } : u));
+            setSearchResults(prev => prev.map(u => u.Id === addresseeId ? { ...u, Status: 'pending', RequesterId: user.Id } : u));
+            fetchFriends(); // Fetch to update friendsList too
         } catch (err) {
             console.error(err);
         }
@@ -179,6 +206,42 @@ const Chat = ({ user, setUser }) => {
             console.error(err);
         }
     };
+
+    const unfriendUser = async (friendId) => {
+        try {
+            await axios.delete(`http://${window.location.hostname}:5000/api/friends/${friendId}`);
+            fetchFriends();
+            setSearchResults(prev => prev.map(u => u.Id === friendId ? { ...u, Status: null } : u));
+            if (selectedFriend && selectedFriend.Id === friendId) {
+                setSelectedFriend(null);
+            }
+        } catch (err) {
+            console.error('Error removing friend:', err);
+        }
+    };
+    
+    const blockUser = async (blockId) => {
+        try {
+            await axios.put(`http://${window.location.hostname}:5000/api/friends/block`, { userId: user.Id, blockId });
+            fetchFriends();
+            setSearchResults(prev => prev.map(u => u.Id === blockId ? { ...u, Status: 'blocked' } : u));
+            if (selectedFriend && selectedFriend.Id === blockId) {
+                setSelectedFriend(null);
+            }
+        } catch (err) {
+            console.error('Error blocking user:', err);
+        }
+    };
+    
+    const unblockUser = async (blockId) => {
+        try {
+            await axios.delete(`http://${window.location.hostname}:5000/api/friends/${blockId}`);
+            fetchFriends();
+            setSearchResults(prev => prev.map(u => u.Id === blockId ? { ...u, Status: null } : u));
+        } catch (err) {
+            console.error('Error unblocking user:', err);
+        }
+    };
     // Messages
     useEffect(() => {
         if (!selectedFriend || !user) return;
@@ -186,15 +249,12 @@ const Chat = ({ user, setUser }) => {
         setHasMore(true);
         const fetchMessages = async () => {
             try {
-                let url = `http://${window.location.hostname}:5000/api/messages?limit=20&`;
-                if (selectedFriend.IsGroup) {
-                    url += `groupId=${selectedFriend.Id}`;
-                } else {
-                    url += `user1=${user.Id}&user2=${selectedFriend.Id}`;
-                }
+                let url = `http://${window.location.hostname}:5000/api/messages?limit=20&user1=${user.Id}&user2=${selectedFriend.Id}`;
                 const response = await axios.get(url, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
                 setMessages(response.data);
                 if (response.data.length < 20) setHasMore(false);
+                
+                socket.emit('markAsRead', { senderId: selectedFriend.Id, receiverId: user.Id });
             } catch (err) {
                 console.error("Failed to fetch messages", err);
             }
@@ -211,12 +271,7 @@ const Chat = ({ user, setUser }) => {
             const previousScrollHeight = messagesAreaRef.current.scrollHeight;
             
             try {
-                let url = `http://${window.location.hostname}:5000/api/messages?limit=20&beforeId=${oldestMessageId}&`;
-                if (selectedFriend.IsGroup) {
-                    url += `groupId=${selectedFriend.Id}`;
-                } else {
-                    url += `user1=${user.Id}&user2=${selectedFriend.Id}`;
-                }
+                let url = `http://${window.location.hostname}:5000/api/messages?limit=20&beforeId=${oldestMessageId}&user1=${user.Id}&user2=${selectedFriend.Id}`;
                 const response = await axios.get(url, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
                 
                 if (response.data.length < 20) {
@@ -264,12 +319,18 @@ const Chat = ({ user, setUser }) => {
     // Socket
     useEffect(() => {
         const handleReceiveMessage = (message) => {
+            if (message.SenderId != user.Id) {
+                socket.emit('markAsDelivered', { messageId: message.Id, senderId: message.SenderId });
+            }
+
             if (
-                (selectedFriend && !selectedFriend.IsGroup && (message.SenderId == selectedFriend.Id || message.ReceiverId == selectedFriend.Id || (message.SenderId == user.Id && message.ReceiverId == selectedFriend.Id))) ||
-                (selectedFriend && selectedFriend.IsGroup && message.GroupId == selectedFriend.Id)
+                (selectedFriend && (message.SenderId == selectedFriend.Id || message.ReceiverId == selectedFriend.Id || (message.SenderId == user.Id && message.ReceiverId == selectedFriend.Id)))
             ) {
                 setMessages(prev => [...prev, message]);
-                if (message.SenderId != user.Id) playNotificationSound();
+                if (message.SenderId != user.Id) {
+                    playNotificationSound();
+                    socket.emit('markAsRead', { senderId: message.SenderId, receiverId: user.Id });
+                }
             } else if (message.SenderId != user.Id) {
                 if (localStorage.getItem('soundEnabled') !== 'false') {
                     const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
@@ -278,7 +339,7 @@ const Chat = ({ user, setUser }) => {
                 
                 setUnreadCounts(prev => ({
                     ...prev,
-                    [message.SenderId || message.GroupId]: (prev[message.SenderId || message.GroupId] || 0) + 1
+                    [message.SenderId]: (prev[message.SenderId] || 0) + 1
                 }));
             }
         };
@@ -308,17 +369,30 @@ const Chat = ({ user, setUser }) => {
         };
 
         const handleTyping = (data) => {
-            if (selectedFriend && ((data.groupId && selectedFriend.IsGroup && selectedFriend.Id == data.groupId) || (!selectedFriend.IsGroup && data.senderId == selectedFriend.Id))) {
+            if (selectedFriend && data.senderId == selectedFriend.Id) {
                 setIsTyping(data.isTyping);
             }
         };
 
+        const handleMessageStatusChanged = ({ messageId, status }) => {
+            setMessages(prev => prev.map(m => m.Id === messageId ? { ...m, IsDelivered: status === 'delivered' || m.IsDelivered, IsRead: status === 'read' ? true : m.IsRead } : m));
+        };
+
+        const handleMessagesRead = ({ byUserId }) => {
+            setMessages(prev => prev.map(m => m.ReceiverId == byUserId ? { ...m, IsRead: true, IsDelivered: true } : m));
+        };
+
         socket.on('connect', handleConnect);
         socket.on('receiveMessage', handleReceiveMessage);
+        socket.on('messageStatusChanged', handleMessageStatusChanged);
+        socket.on('messagesRead', handleMessagesRead);
         socket.on('onlineUsersList', handleOnlineUsersList);
         socket.on('userOnline', handleUserOnline);
         socket.on('userOffline', handleUserOffline);
         socket.on('typing', handleTyping);
+        socket.on('friendRequestReceived', fetchFriends);
+        socket.on('friendRequestAccepted', fetchFriends);
+        socket.on('friendshipUpdated', fetchFriends);
         
         if (socket.connected && user) {
             socket.emit('join', user);
@@ -327,10 +401,15 @@ const Chat = ({ user, setUser }) => {
         return () => {
             socket.off('connect', handleConnect);
             socket.off('receiveMessage', handleReceiveMessage);
+            socket.off('messageStatusChanged', handleMessageStatusChanged);
+            socket.off('messagesRead', handleMessagesRead);
             socket.off('onlineUsersList', handleOnlineUsersList);
             socket.off('userOnline', handleUserOnline);
             socket.off('userOffline', handleUserOffline);
             socket.off('typing', handleTyping);
+            socket.off('friendRequestReceived', fetchFriends);
+            socket.off('friendRequestAccepted', fetchFriends);
+            socket.off('friendshipUpdated', fetchFriends);
         };
     }, [selectedFriend, user]);
 
@@ -369,12 +448,7 @@ const Chat = ({ user, setUser }) => {
             });
             
             // Fetch updated messages
-            let url = `http://${window.location.hostname}:5000/api/messages?`;
-            if (selectedFriend.IsGroup) {
-                url += `groupId=${selectedFriend.Id}`;
-            } else {
-                url += `user1=${user.Id}&user2=${selectedFriend.Id}`;
-            }
+            let url = `http://${window.location.hostname}:5000/api/messages?user1=${user.Id}&user2=${selectedFriend.Id}`;
             const response = await axios.get(url, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
             setMessages(response.data);
         } catch (err) { console.error('Error reacting', err); }
@@ -394,8 +468,7 @@ const Chat = ({ user, setUser }) => {
         if (newMessage.trim() || replyingTo) {
             socket.emit('sendMessage', {
                 senderId: user.Id,
-                receiverId: selectedFriend.IsGroup ? null : selectedFriend.Id,
-                groupId: selectedFriend.IsGroup ? selectedFriend.Id : null,
+                receiverId: selectedFriend.Id,
                 content: newMessage,
                 username: user.Username,
                 replyToMessageId: replyingTo?.Id || null
@@ -437,73 +510,35 @@ const Chat = ({ user, setUser }) => {
     };
 
     const handleSaveProfile = async () => {
+        setEditProfileError('');
         try {
-            await axios.put(`http://${window.location.hostname}:5000/api/users/profile`, editProfileData, {
+            const response = await axios.put(`http://${window.location.hostname}:5000/api/users/profile`, editProfileData, {
                 headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
             });
-            const updatedUser = { ...user, ...editProfileData };
+            const updatedUser = response.data.user || { ...user, ...editProfileData };
             setUser(updatedUser);
             localStorage.setItem('user', JSON.stringify(updatedUser));
             setIsEditingProfile(false);
         } catch (err) {
             console.error('Failed to save profile:', err);
-            alert('Failed to save profile');
+            if (err.response && err.response.data && err.response.data.error) {
+                setEditProfileError(err.response.data.error);
+            } else {
+                setEditProfileError('Có lỗi xảy ra khi lưu thay đổi.');
+            }
         }
     };
-
-    
-    const fetchGroups = async () => {
-        try {
-            const res = await axios.get(`http://${window.location.hostname}:5000/api/groups`, {
-                headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
-            });
-            setGroups(res.data);
-            socket.emit('joinGroups', res.data.map(g => g.Id));
-        } catch (err) {
-            console.error('Failed to fetch groups:', err);
-        }
-    };
-
-    const handleCreateGroup = async () => {
-        if (!newGroupName.trim() || newGroupMembers.length === 0) {
-            alert("Please enter a group name and select at least one member.");
-            return;
-        }
-        try {
-            const res = await axios.post(`http://${window.location.hostname}:5000/api/groups`, {
-                Name: newGroupName,
-                MemberIds: newGroupMembers
-            }, {
-                headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
-            });
-            
-            setGroups([...groups, res.data]);
-            socket.emit('joinGroups', [res.data.Id]);
-            setIsCreateGroupModalOpen(false);
-            setNewGroupName('');
-            setNewGroupMembers([]);
-        } catch (err) {
-            console.error('Failed to create group:', err);
-            alert('Failed to create group');
-        }
-    };
-
-    useEffect(() => {
-        if (activeTab === 'chats') {
-            fetchGroups();
-        }
-    }, [activeTab]);
 
 const handleMessageChange = (e) => {
         setNewMessage(e.target.value);
         if (!selectedFriend) return;
 
-        socket.emit('typing', { senderId: user.Id, receiverId: selectedFriend.IsGroup ? null : selectedFriend.Id, groupId: selectedFriend.IsGroup ? selectedFriend.Id : null });
+        socket.emit('typing', { senderId: user.Id, receiverId: selectedFriend.Id });
 
         if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
 
         typingTimeoutRef.current = setTimeout(() => {
-            socket.emit('stopTyping', { senderId: user.Id, receiverId: selectedFriend.IsGroup ? null : selectedFriend.Id, groupId: selectedFriend.IsGroup ? selectedFriend.Id : null });
+            socket.emit('stopTyping', { senderId: user.Id, receiverId: selectedFriend.Id });
         }, 1500);
     };
 
@@ -521,8 +556,7 @@ const handleMessageChange = (e) => {
             
             socket.emit('sendMessage', {
                 senderId: user.Id,
-                receiverId: selectedFriend.IsGroup ? null : selectedFriend.Id,
-                groupId: selectedFriend.IsGroup ? selectedFriend.Id : null,
+                receiverId: selectedFriend.Id,
                 content: 'Sent an image',
                 imageUrl: response.data.imageUrl,
                 username: user.Username,
@@ -548,8 +582,7 @@ const handleMessageChange = (e) => {
             
             socket.emit('sendFileMessage', {
                 senderId: user.Id,
-                receiverId: selectedFriend.IsGroup ? null : selectedFriend.Id,
-                groupId: selectedFriend.IsGroup ? selectedFriend.Id : null,
+                receiverId: selectedFriend.Id,
                 content: `Sent a file`,
                 attachmentUrl: response.data.fileUrl,
                 username: user.Username,
@@ -587,8 +620,7 @@ const handleMessageChange = (e) => {
                         });
                         socket.emit('sendFileMessage', {
                             senderId: user.Id,
-                            receiverId: selectedFriend.IsGroup ? null : selectedFriend.Id,
-                            groupId: selectedFriend.IsGroup ? selectedFriend.Id : null,
+                            receiverId: selectedFriend.Id,
                             content: 'Voice message',
                             attachmentUrl: res.data.fileUrl,
                             username: user.Username,
@@ -610,8 +642,7 @@ const handleMessageChange = (e) => {
         if (!selectedFriend) return;
         socket.emit('sendMessage', {
             senderId: user.Id,
-            receiverId: selectedFriend.IsGroup ? null : selectedFriend.Id,
-            groupId: selectedFriend.IsGroup ? selectedFriend.Id : null,
+            receiverId: selectedFriend.Id,
             content: 'Sent a sticker',
             imageUrl: url,
             username: user.Username,
@@ -705,6 +736,30 @@ const handleMessageChange = (e) => {
         localStorage.setItem('mutedUsers', JSON.stringify(newMuted));
     };
 
+    const handleArchiveChat = async () => {
+        try {
+            if (selectedFriend.IsArchived) {
+                await fetch(`http://${window.location.hostname}:5000/api/archive/${selectedFriend.Id}`, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+                });
+            } else {
+                await fetch(`http://${window.location.hostname}:5000/api/archive`, {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${localStorage.getItem('token')}` 
+                    },
+                    body: JSON.stringify({ friendId: selectedFriend.Id })
+                });
+            }
+            setSelectedFriend(null);
+            fetchFriends(); // Refresh list to remove/add from archive
+        } catch (err) {
+            console.error('Failed to toggle archive', err);
+        }
+    };
+
     const handleBlockUser = async () => {
         setConfirmDialog({
             isOpen: true,
@@ -753,49 +808,38 @@ const handleMessageChange = (e) => {
 
     if (!user) return null;
 
-    const activeFriends = friendsList.filter(f => f.Status === 'accepted');
+    const activeFriends = friendsList.filter(f => f.Status === 'accepted' && f.IsArchived !== 1);
+    const archivedFriends = friendsList.filter(f => f.Status === 'accepted' && f.IsArchived === 1);
     const pendingRequests = friendsList.filter(f => f.Status === 'pending' && String(f.AddresseeId) === String(user.Id));
 
     const renderListPane = () => {
         if (activeTab === 'chats') {
             return (
                 <>
-                    <div className="chat-list-header" style={{display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '10px'}}>
-                        <h2 style={{margin: 0}}>{getText('chatList')}</h2>
-                        <button onClick={() => setIsCreateGroupModalOpen(true)} style={{background: 'var(--primary-color)', color: 'white', border: 'none', borderRadius: '50%', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer'}} title="Tạo nhóm mới">
-                            <Plus size={20} />
-                        </button>
-                        <div className="search-bar" style={{width: '100%'}}>
-                            <Search size={18} className="search-icon" color="var(--text-secondary)" />
-                            <input key="chats-search" type="text" placeholder={getText('search')} />
+                    <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'}}>
+                        <h2 style={{margin: 0, fontSize: '24px', fontWeight: 'bold'}}>{getText('chatList')}</h2>
+                        <div style={{display: 'flex', gap: '8px'}}>
+                            <div style={{width: '36px', height: '36px', borderRadius: '50%', background: 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'background 0.2s'}} onMouseOver={e => e.currentTarget.style.background='rgba(255,255,255,0.1)'} onMouseOut={e => e.currentTarget.style.background='rgba(255,255,255,0.05)'}>
+                                <MoreHorizontal size={20} color="var(--text-primary)" />
+                            </div>
+                            <div style={{width: '36px', height: '36px', borderRadius: '50%', background: 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'background 0.2s'}} onMouseOver={e => e.currentTarget.style.background='rgba(255,255,255,0.1)'} onMouseOut={e => e.currentTarget.style.background='rgba(255,255,255,0.05)'}>
+                                <Edit2 size={20} color="var(--text-primary)" />
+                            </div>
                         </div>
+                    </div>
+                    <div className="search-bar" style={{width: '100%', marginBottom: '16px', borderRadius: '20px', padding: '8px 16px'}}>
+                        <Search size={18} className="search-icon" color="var(--text-secondary)" />
+                        <input key="chats-search" type="text" placeholder={getText('search')} style={{marginLeft: '8px'}} />
                     </div>
                     <div className="chat-items">
                         
-                        {groups.map(group => (
-                            <div
-                                key={'g'+group.Id}
-                                className={`chat-item ${selectedFriend?.Id == group.Id && selectedFriend?.IsGroup ? 'active' : ''}`}
-                                onClick={() => handleSelectFriend({...group, IsGroup: true, Username: group.Name, FullName: group.Name})}
-                            >
-                                <div className="chat-avatar" style={{background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', overflow: 'hidden'}}>
-                                    {group.AvatarUrl ? <img src={`http://${window.location.hostname}:5000${group.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : <Users size={24} />}
-                                    <div className="chat-status-dot" style={{ backgroundColor: '#22c55e' }}></div>
-                                </div>
-                                <div className="chat-item-info">
-                                    <div className="chat-item-top">
-                                        <span className="chat-item-name" style={{fontWeight: 'bold'}}>{group.Name} (Group)</span>
-                                    </div>
-                                </div>
-                            </div>
-                        ))}
-                        {activeFriends.length === 0 && groups.length === 0 ? (
+                        {activeFriends.length === 0 ? (
                             <div style={{color: 'var(--text-secondary)', padding: '16px'}}>{getText('homeDesc')}</div>
                         ) : (
                             activeFriends.map(friend => (
                                 <div 
                                     key={friend.Id} 
-                                    className={`chat-item ${selectedFriend?.Id == friend.Id && !selectedFriend?.IsGroup ? 'active' : ''}`}
+                                    className={`chat-item ${selectedFriend?.Id == friend.Id ? 'active' : ''}`}
                                     onClick={() => handleSelectFriend(friend)}
                                 >
                                     <div style={{position: 'relative'}}>
@@ -820,69 +864,172 @@ const handleMessageChange = (e) => {
             );
         }
         
-        if (activeTab === 'people') {
+        if (activeTab === 'archive') {
             return (
                 <>
-                    <div className="chat-list-header">
-                        <h2>{getText('people')}</h2>
-                        <div className="search-bar">
-                            <Search size={18} className="search-icon" color="var(--text-secondary)" />
-                            <input 
-                                key="people-search"
-                                type="text" 
-                                placeholder={getText('search')} 
-                                value={searchQuery}
-                                onChange={e => setSearchQuery(e.target.value)}
-                            />
-                        </div>
+                    <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px'}}>
+                        <h2 style={{margin: 0, fontSize: '24px', fontWeight: 'bold'}}>Kho lưu trữ</h2>
+                    </div>
+                    <div className="search-bar" style={{width: '100%', marginBottom: '16px', borderRadius: '20px', padding: '8px 16px'}}>
+                        <Search size={18} className="search-icon" color="var(--text-secondary)" />
+                        <input key="archive-search" type="text" placeholder={getText('search')} style={{marginLeft: '8px'}} />
                     </div>
                     <div className="chat-items">
-                        {pendingRequests.length > 0 && (
-                            <div style={{marginBottom: '16px'}}>
-                                <h3 style={{fontSize: '12px', color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: '8px'}}>Requests</h3>
-                                {pendingRequests.map(req => (
-                                    <div key={req.Id} className="chat-item">
+                        {archivedFriends.length === 0 ? (
+                            <div style={{color: 'var(--text-secondary)', padding: '16px'}}>Không có đoạn chat nào trong kho lưu trữ.</div>
+                        ) : (
+                            archivedFriends.map(friend => (
+                                <div 
+                                    key={friend.Id} 
+                                    className={`chat-item ${selectedFriend?.Id == friend.Id ? 'active' : ''}`}
+                                    onClick={() => handleSelectFriend(friend)}
+                                >
+                                    <div style={{position: 'relative'}}>
                                         <div className="chat-avatar" style={{background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', overflow: 'hidden'}}>
-                                            {req.AvatarUrl ? <img src={`http://${window.location.hostname}:5000${req.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : <UserIcon size={24} />}
+                                            {friend.AvatarUrl ? <img src={`http://${window.location.hostname}:5000${friend.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : <UserIcon size={24} />}
                                         </div>
-                                        <div className="chat-item-info">
-                                            <span className="chat-item-name">{req.FullName || req.Username}</span>
-                                        </div>
-                                        <button onClick={() => acceptFriendRequest(req.RequesterId)} style={{background: 'var(--primary-color)', color: 'white', border: 'none', borderRadius: '8px', padding: '6px 12px', cursor: 'pointer'}}>
-                                            Accept
-                                        </button>
                                     </div>
-                                ))}
-                            </div>
+                                    <div className="chat-item-info">
+                                        <div className="chat-item-top">
+                                            <span className="chat-item-name">{friend.FullName || friend.Username}</span>
+                                        </div>
+                                    </div>
+                                    {unreadCounts[friend.Id] > 0 && (
+                                        <div className="unread-badge">{unreadCounts[friend.Id]}</div>
+                                    )}
+                                </div>
+                            ))
                         )}
-
-                        <div>
-                            {searchResults.length === 0 && searchQuery ? (
-                                <div style={{color: 'var(--text-secondary)', padding: '8px'}}>No users found</div>
-                            ) : (
-                                searchResults.map(su => (
-                                    <div key={su.Id} className="chat-item">
-                                        <div className="chat-avatar" style={{background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', overflow: 'hidden'}}>
-                                            {su.AvatarUrl ? <img src={`http://${window.location.hostname}:5000${su.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : <UserIcon size={24} />}
-                                        </div>
-                                        <div className="chat-item-info">
-                                            <span className="chat-item-name">{su.FullName || su.Username}</span>
-                                        </div>
-                                        {su.Status === 'accepted' ? (
-                                            <span style={{fontSize: '12px', color: 'var(--primary-color)'}}>Friend</span>
-                                        ) : su.Status === 'pending' ? (
-                                            <span style={{fontSize: '12px', color: 'var(--text-secondary)'}}>Pending</span>
-                                        ) : (
-                                            <button onClick={() => sendFriendRequest(su.Id)} style={{background: 'rgba(255,255,255,0.1)', border: '1px solid var(--glass-border)', borderRadius: '8px', padding: '6px 12px', cursor: 'pointer', color: 'var(--text-primary)'}}>
-                                                Add
-                                            </button>
-                                        )}
-                                    </div>
-                                ))
-                            )}
-                        </div>
                     </div>
                 </>
+            );
+        }
+        
+        if (activeTab === 'people') {
+            const blockedUsers = friendsList.filter(f => f.Status === 'blocked' && String(f.RequesterId) === String(user.Id));
+            const suggestions = searchResults.filter(su => !su.Status || su.Status === 'declined' || (su.Status === 'pending' && String(su.RequesterId) === String(user.Id)));
+
+            return (
+                <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                    <div className="chat-list-header" style={{ paddingBottom: 0 }}>
+                        <h2 style={{ marginBottom: '16px' }}>{getText('people') || 'Mọi người'}</h2>
+                        
+                        {/* Sub-tabs */}
+                        <div style={{ display: 'flex', gap: '16px', borderBottom: '1px solid var(--glass-border)', paddingBottom: '8px', marginBottom: '16px' }}>
+                            <div 
+                                onClick={() => setPeopleSubTab('friends')}
+                                style={{ 
+                                    cursor: 'pointer', 
+                                    color: peopleSubTab === 'friends' ? 'var(--primary-color)' : 'var(--text-secondary)',
+                                    fontWeight: peopleSubTab === 'friends' ? 'bold' : 'normal',
+                                    borderBottom: peopleSubTab === 'friends' ? '2px solid var(--primary-color)' : 'none',
+                                    paddingBottom: '4px'
+                                }}
+                            >
+                                Bạn bè ({activeFriends.length})
+                            </div>
+                            <div 
+                                onClick={() => setPeopleSubTab('suggestions')}
+                                style={{ 
+                                    cursor: 'pointer', 
+                                    color: peopleSubTab === 'suggestions' ? 'var(--primary-color)' : 'var(--text-secondary)',
+                                    fontWeight: peopleSubTab === 'suggestions' ? 'bold' : 'normal',
+                                    borderBottom: peopleSubTab === 'suggestions' ? '2px solid var(--primary-color)' : 'none',
+                                    paddingBottom: '4px'
+                                }}
+                            >
+                                Gợi ý kết bạn
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div className="chat-items" style={{ flex: 1, overflowY: 'auto', padding: '0 16px 16px', paddingTop: '16px' }}>
+                        {peopleSubTab === 'friends' ? (
+                            <>
+                                {pendingRequests.length > 0 && (
+                                    <div style={{marginBottom: '24px'}}>
+                                        <h3 style={{fontSize: '12px', color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: '8px'}}>Lời mời kết bạn</h3>
+                                        {pendingRequests.map(req => (
+                                            <div key={req.Id} className="chat-item">
+                                                <div className="chat-avatar" style={{background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', overflow: 'hidden'}}>
+                                                    {req.AvatarUrl ? <img src={`http://${window.location.hostname}:5000${req.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : <UserIcon size={24} />}
+                                                </div>
+                                                <div className="chat-item-info">
+                                                    <span className="chat-item-name">{req.FullName || req.Username}</span>
+                                                </div>
+                                                <button onClick={() => acceptFriendRequest(req.RequesterId)} style={{background: 'var(--primary-color)', color: 'white', border: 'none', borderRadius: '8px', padding: '6px 12px', cursor: 'pointer'}}>
+                                                    Chấp nhận
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+
+                                <div style={{marginBottom: '24px'}}>
+                                    <h3 style={{fontSize: '12px', color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: '8px'}}>Bạn bè</h3>
+                                    {activeFriends.length === 0 ? (
+                                        <div style={{color: 'var(--text-secondary)', fontSize: '14px'}}>Chưa có bạn bè nào</div>
+                                    ) : (
+                                        activeFriends.map(friend => (
+                                            <div key={friend.Id} className="chat-item">
+                                                <div className="chat-avatar" style={{background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', overflow: 'hidden'}}>
+                                                    {friend.AvatarUrl ? <img src={`http://${window.location.hostname}:5000${friend.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : <UserIcon size={24} />}
+                                                </div>
+                                                <div className="chat-item-info">
+                                                    <span className="chat-item-name">{friend.FullName || friend.Username}</span>
+                                                </div>
+                                                <div style={{display: 'flex', gap: '8px'}}>
+                                                    <button onClick={() => unfriendUser(friend.Id)} style={{background: 'rgba(255,100,100,0.1)', border: '1px solid rgba(255,100,100,0.3)', borderRadius: '8px', padding: '6px 12px', cursor: 'pointer', color: '#ff6b6b', fontSize: '13px'}}>
+                                                        Xóa
+                                                    </button>
+                                                    <button onClick={() => blockUser(friend.Id)} style={{background: 'rgba(255,255,255,0.1)', border: '1px solid var(--glass-border)', borderRadius: '8px', padding: '6px 12px', cursor: 'pointer', color: 'var(--text-secondary)', fontSize: '13px'}}>
+                                                        Chặn
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ))
+                                    )}
+                                </div>
+                            </>
+                        ) : (
+                            <>
+                                <div className="search-bar" style={{marginBottom: '16px'}}>
+                                    <Search size={18} className="search-icon" color="var(--text-secondary)" />
+                                    <input 
+                                        key="people-search"
+                                        type="text" 
+                                        placeholder="Tìm kiếm người dùng..." 
+                                        value={searchQuery}
+                                        onChange={e => setSearchQuery(e.target.value)}
+                                    />
+                                </div>
+                                {suggestions.length === 0 ? (
+                                    <div style={{color: 'var(--text-secondary)', padding: '8px'}}>Không tìm thấy ai</div>
+                                ) : (
+                                    suggestions.map(su => (
+                                        <div key={su.Id} className="chat-item">
+                                            <div className="chat-avatar" style={{background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', overflow: 'hidden'}}>
+                                                {su.AvatarUrl ? <img src={`http://${window.location.hostname}:5000${su.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : <UserIcon size={24} />}
+                                            </div>
+                                            <div className="chat-item-info">
+                                                <span className="chat-item-name">{su.FullName || su.Username}</span>
+                                            </div>
+                                            {su.Status === 'pending' && String(su.RequesterId) === String(user.Id) ? (
+                                                <button disabled style={{background: 'var(--glass-border)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '6px 16px', cursor: 'not-allowed', color: 'var(--text-secondary)'}}>
+                                                    Đã gửi
+                                                </button>
+                                            ) : (
+                                                <button onClick={() => sendFriendRequest(su.Id)} style={{background: 'var(--primary-color)', border: 'none', borderRadius: '8px', padding: '6px 16px', cursor: 'pointer', color: 'white'}}>
+                                                    Kết bạn
+                                                </button>
+                                            )}
+                                        </div>
+                                    ))
+                                )}
+                            </>
+                        )}
+                    </div>
+                </div>
             );
         }
 
@@ -891,7 +1038,7 @@ const handleMessageChange = (e) => {
                 <>
                     <div className="chat-list-header" style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
                         <h2>{getText('profile') || 'Profile'}</h2>
-                        <button className="btn-edit-profile" onClick={() => { setEditProfileData({ FullName: user.FullName || '', Bio: user.Bio || '' }); setIsEditingProfile(true); }} style={{background: 'rgba(255,255,255,0.1)', border: 'none', color: 'var(--text-primary)', padding: '6px 12px', borderRadius: '8px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px'}}>
+                        <button className="btn-edit-profile" onClick={() => { setEditProfileData({ FullName: user.FullName || '', Bio: user.Bio || '', Username: user.Username || '', Email: user.Email || '', DateOfBirth: user.DateOfBirth ? user.DateOfBirth.split('T')[0] : '', Password: '' }); setEditProfileError(''); setIsEditingProfile(true); }} style={{background: 'rgba(255,255,255,0.1)', border: 'none', color: 'var(--text-primary)', padding: '6px 12px', borderRadius: '8px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px'}}>
                             <Edit2 size={14} /> Edit Profile
                         </button>
                     </div>
@@ -934,89 +1081,6 @@ const handleMessageChange = (e) => {
             );
         }
 
-        if (activeTab === 'settings') {
-            return (
-                <>
-                    <div className="chat-list-header">
-                        <h2>{getText('settings')}</h2>
-                    </div>
-                    <div className="chat-items" style={{padding: '0 8px'}}>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '16px', background: 'rgba(255,255,255,0.05)', borderRadius: '12px', color: 'var(--text-primary)' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                <span style={{fontWeight: '500'}}>{getText('darkMode')}</span>
-                                <label className="toggle-switch">
-                                    <input type="checkbox" checked={isDarkMode} onChange={(e) => setIsDarkMode(e.target.checked)} />
-                                    <span className="slider"></span>
-                                </label>
-                            </div>
-                            
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                <span style={{fontWeight: '500'}}>{getText('soundNotif')}</span>
-                                <label className="toggle-switch">
-                                    <input type="checkbox" checked={soundEnabled} onChange={(e) => setSoundEnabled(e.target.checked)} />
-                                    <span className="slider"></span>
-                                </label>
-                            </div>
-
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                <span style={{fontWeight: '500'}}>{getText('showOnline')}</span>
-                                <label className="toggle-switch">
-                                    <input type="checkbox" checked={showStatus} onChange={(e) => setShowStatus(e.target.checked)} />
-                                    <span className="slider"></span>
-                                </label>
-                            </div>
-
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'relative' }}>
-                                <span style={{fontWeight: '500'}}>{getText('lang')}</span>
-                                <div style={{ position: 'relative' }}>
-                                    <div 
-                                        onClick={() => setIsLangDropdownOpen(!isLangDropdownOpen)}
-                                        style={{ padding: '8px 12px', borderRadius: '8px', background: 'rgba(0,0,0,0.2)', border: '1px solid var(--glass-border)', color: 'var(--text-primary)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', minWidth: '120px', justifyContent: 'space-between' }}
-                                    >
-                                        <span>{language}</span>
-                                        <ChevronDown size={16} />
-                                    </div>
-                                    {isLangDropdownOpen && (
-                                        <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: '4px', background: 'var(--bg-color)', border: '1px solid var(--glass-border)', borderRadius: '8px', overflow: 'hidden', zIndex: 10, minWidth: '120px', boxShadow: '0 4px 12px rgba(0,0,0,0.2)' }}>
-                                            {['English', 'Vietnamese', 'Japanese'].map(lang => (
-                                                <div 
-                                                    key={lang}
-                                                    onClick={() => { setLanguage(lang); setIsLangDropdownOpen(false); }}
-                                                    style={{ padding: '10px 16px', cursor: 'pointer', background: language === lang ? 'var(--primary-color)' : 'transparent', color: language === lang ? 'white' : 'var(--text-primary)', fontSize: '14px' }}
-                                                    onMouseEnter={(e) => { if (language !== lang) e.target.style.background = 'rgba(255,255,255,0.05)' }}
-                                                    onMouseLeave={(e) => { if (language !== lang) e.target.style.background = 'transparent' }}
-                                                >
-                                                    {lang}
-                                                </div>
-                                            ))}
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <button className="btn-primary" style={{width: '100%', marginTop: '16px', color: 'white', border: 'none', padding: '12px', borderRadius: '12px', cursor: 'pointer', fontWeight: 'bold'}} onClick={() => setShowPasswordModal(true)}>{getText('changePwd')}</button>
-
-                        <button className="btn-primary" style={{width: '100%', backgroundColor: '#ef4444', marginTop: '16px', color: 'white', border: 'none', padding: '12px', borderRadius: '12px', cursor: 'pointer', fontWeight: 'bold'}} onClick={handleLogout}>{getText('logOut')}</button>
-                    </div>
-                </>
-            );
-        }
-
-        if (activeTab === 'home') {
-            return (
-                <>
-                    <div className="chat-list-header">
-                        <h2>{getText('home')}</h2>
-                    </div>
-                    <div className="chat-items" style={{padding: '16px', color: 'var(--text-secondary)'}}>
-                        <p>{getText('welcome')}</p>
-                        <p style={{marginTop: '8px'}}>{getText('homeDesc')}</p>
-                    </div>
-                </>
-            );
-        }
-
         return null;
     };
 
@@ -1025,28 +1089,77 @@ const handleMessageChange = (e) => {
             <div className={`main-layout ${selectedFriend ? 'has-active-chat' : ''}`}>
                 {/* COLUMN 1: SIDEBAR NAV */}
                 <nav className="sidebar-nav">
-                    <div className="nav-avatar" style={{background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', overflow: 'hidden', cursor: 'pointer'}} onClick={() => setActiveTab('profile')}>
-                        {user.AvatarUrl ? <img src={`http://${window.location.hostname}:5000${user.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : <UserIcon size={24} />}
-                        <div className="nav-status-dot"></div>
-                    </div>
                     <div className="nav-items">
-                        <button className={`nav-item ${activeTab === 'home' ? 'active' : ''}`} onClick={() => setActiveTab('home')} title={getText('home')}>
-                            <Home size={24} />
-                        </button>
                         <button className={`nav-item ${activeTab === 'chats' ? 'active' : ''}`} onClick={() => setActiveTab('chats')} title={getText('chats')}>
                             <MessageSquare size={24} />
+                            <span>Đoạn chat</span>
                         </button>
                         <button className={`nav-item ${activeTab === 'people' ? 'active' : ''}`} onClick={() => setActiveTab('people')} title={getText('people')}>
                             <Users size={24} />
+                            <span>Mọi người</span>
+                        </button>
+                        <button className={`nav-item ${activeTab === 'archive' ? 'active' : ''}`} onClick={() => setActiveTab('archive')} title="Kho lưu trữ">
+                            <Archive size={24} />
+                            <span>Kho lưu trữ</span>
                         </button>
                     </div>
                     <div className="nav-bottom">
-                        <button className={`nav-item ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => setActiveTab('settings')} title={getText('settings')}>
-                            <Settings size={24} />
-                        </button>
-                        <button className="nav-item" onClick={handleLogout} title={getText('logOut')}>
-                            <LogOut size={24} />
-                        </button>
+                        <div className="nav-item" style={{display: 'flex', alignItems: 'center', gap: '12px', position: 'relative', width: '100%', padding: '8px'}} ref={profileMenuRef} onClick={() => setShowProfileMenu(!showProfileMenu)}>
+                            <div style={{width: '36px', height: '36px', borderRadius: '50%', background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', overflow: 'hidden', flexShrink: 0}}>
+                                {user.AvatarUrl ? <img src={`http://${window.location.hostname}:5000${user.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : <UserIcon size={20} />}
+                            </div>
+                            <span style={{flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontWeight: '600', color: 'var(--text-primary)', fontSize: '15px'}}>{user.FullName || user.Username}</span>
+                            <Settings size={20} style={{color: 'var(--text-secondary)'}} />
+                            
+                            {showProfileMenu && (
+                                <div className="profile-popup-menu" style={{
+                                    position: 'absolute',
+                                    left: '0',
+                                    bottom: '100%',
+                                    marginBottom: '16px',
+                                    background: 'var(--bg-color)',
+                                    border: '1px solid var(--glass-border)',
+                                    borderRadius: '12px',
+                                    width: '280px',
+                                    boxShadow: '0 8px 24px rgba(0,0,0,0.2)',
+                                    zIndex: 1000,
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    overflow: 'hidden'
+                                }}>
+                                    <div className="profile-menu-item" onClick={() => { setShowSettingsModal(true); setShowProfileMenu(false); }}>
+                                        <Settings size={18} />
+                                        <span>Tùy chọn</span>
+                                    </div>
+                                    <div className="profile-menu-item" onClick={() => { setEditProfileData({ FullName: user.FullName || '', Bio: user.Bio || '', Username: user.Username || '', Email: user.Email || '', DateOfBirth: user.DateOfBirth ? user.DateOfBirth.split('T')[0] : '', Password: '' }); setEditProfileError(''); setIsEditingProfile(true); setShowProfileMenu(false); }}>
+                                        <Edit2 size={18} />
+                                        <span>Chỉnh sửa tên người dùng</span>
+                                    </div>
+                                    <div className="profile-menu-item" onClick={() => { setShowBlockedModal(true); setShowProfileMenu(false); }}>
+                                        <Ban size={18} />
+                                        <span>Danh sách chặn</span>
+                                    </div>
+                                    <div className="profile-menu-divider"></div>
+                                    <div className="profile-menu-item" onClick={() => { setPolicyType('terms'); setShowPolicyModal(true); setShowProfileMenu(false); }}>
+                                        <FileText size={18} />
+                                        <span>Điều khoản</span>
+                                    </div>
+                                    <div className="profile-menu-item" onClick={() => { setPolicyType('privacy'); setShowPolicyModal(true); setShowProfileMenu(false); }}>
+                                        <FileText size={18} />
+                                        <span>Chính sách quyền riêng tư</span>
+                                    </div>
+                                    <div className="profile-menu-item" onClick={() => { setPolicyType('cookie'); setShowPolicyModal(true); setShowProfileMenu(false); }}>
+                                        <FileText size={18} />
+                                        <span>Chính sách về cookie</span>
+                                    </div>
+                                    <div className="profile-menu-divider"></div>
+                                    <div className="profile-menu-item" onClick={() => { handleLogout(); setShowProfileMenu(false); }}>
+                                        <LogOut size={18} />
+                                        <span>Đăng xuất</span>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
                     </div>
                 </nav>
 
@@ -1057,7 +1170,7 @@ const handleMessageChange = (e) => {
 
                 {/* COLUMN 3: MAIN CHAT */}
                 <main className="main-chat-pane">
-                    {activeTab === 'chats' && selectedFriend ? (
+                    {(activeTab === 'chats' || activeTab === 'archive') && selectedFriend ? (
                         <>
                             <header className="main-chat-header">
                                 <div className="header-user-info">
@@ -1076,14 +1189,10 @@ const handleMessageChange = (e) => {
                                         </div>
                                     </div>
                                 </div>
-                                <div className="header-actions">
-                                    {!selectedFriend.IsGroup && (
-                                        <>
-                                            <MonitorUp size={20} style={{cursor: 'pointer', marginRight: '12px', color: 'var(--text-secondary)'}} title={getText('shareScreen')} onClick={() => initiateCall('screen')} />
-                                            <Video size={20} style={{cursor: 'pointer', marginRight: '12px', color: 'var(--text-secondary)'}} title={getText('videoCall')} onClick={() => initiateCall('video')} />
-                                            <Phone size={20} style={{cursor: 'pointer', marginRight: '12px', color: 'var(--text-secondary)'}} title={getText('audioCall')} onClick={() => initiateCall('audio')} />
-                                        </>
-                                    )}
+                                <div className="header-actions" style={{display: 'flex', alignItems: 'center', gap: '16px'}}>
+                                    <Phone size={24} style={{cursor: 'pointer', color: 'var(--primary-color)'}} title={getText('audioCall')} onClick={() => initiateCall('audio')} />
+                                    <Video size={24} style={{cursor: 'pointer', color: 'var(--primary-color)'}} title={getText('videoCall')} onClick={() => initiateCall('video')} />
+                                    <Info size={24} style={{cursor: 'pointer', color: 'var(--primary-color)'}} title="Thông tin" />
                                 </div>
                             </header>
 
@@ -1108,7 +1217,7 @@ const handleMessageChange = (e) => {
                                                             <img src={`http://${window.location.hostname}:5000${user.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/>
                                                         ) : (!isMine && msg.AvatarUrl) ? (
                                                             <img src={`http://${window.location.hostname}:5000${msg.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/>
-                                                        ) : (!isMine && selectedFriend && !selectedFriend.IsGroup && selectedFriend.AvatarUrl) ? (
+                                                        ) : (!isMine && selectedFriend && selectedFriend.AvatarUrl) ? (
                                                             <img src={`http://${window.location.hostname}:5000${selectedFriend.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/>
                                                         ) : (
                                                             <UserIcon size={12} />
@@ -1177,8 +1286,14 @@ const handleMessageChange = (e) => {
                                                     )}
                                                 </div>
                                                 {isMine && (
-                                                    <div className="message-status">
-                                                        <CheckCheck size={14} /> {getText('read')}
+                                                    <div className="message-status" style={{fontSize: '11px', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '4px', alignSelf: 'flex-end', marginTop: '2px'}}>
+                                                        {msg.IsRead ? (
+                                                            <><CheckCheck size={14} color="#4CAF50" /> {getText('read')}</>
+                                                        ) : msg.IsDelivered ? (
+                                                            <><CheckCheck size={14} /> Đã nhận</>
+                                                        ) : (
+                                                            <><Check size={14} /> Đã gửi</>
+                                                        )}
                                                     </div>
                                                 )}
                                             </div>
@@ -1200,62 +1315,56 @@ const handleMessageChange = (e) => {
             </div>
         )}
         <form className="input-box" onSubmit={handleSendMessage}>
+            <div className="input-actions" style={{display: 'flex', gap: '12px', alignItems: 'center'}}>
+                <label style={{cursor: 'pointer', display: 'flex', alignItems: 'center'}} title={getText('attachDoc')}>
+                    <Plus size={24} style={{color: 'var(--primary-color)'}} />
+                    <input type="file" style={{display: 'none'}} onChange={handleDocumentUpload} />
+                </label>
+                <label style={{cursor: 'pointer', display: 'flex', alignItems: 'center'}} title={getText('attachImage')}>
+                    <ImageIcon size={24} style={{color: 'var(--primary-color)'}} />
+                    <input type="file" style={{display: 'none'}} accept="image/*" onChange={handleImageUpload} />
+                </label>
+                                        <Sticker size={24} style={{cursor: 'pointer', color: 'var(--primary-color)'}} onClick={() => {setShowStickerPicker(!showStickerPicker); setShowEmojiPicker(false);}} />
+                                    </div>
 
-
-                                    <div className="input-main" style={{position: 'relative'}}>
+                                    <div className="input-main" style={{position: 'relative', flex: 1}}>
                                         {showEmojiPicker && (
-                                            <div style={{position: 'absolute', bottom: '100%', left: '0', zIndex: 100, marginBottom: '10px'}}>
+                                            <div style={{position: 'absolute', bottom: '100%', right: '0', zIndex: 100, marginBottom: '10px'}}>
                                                 <EmojiPicker onEmojiClick={(emojiData) => setNewMessage(prev => prev + emojiData.emoji)} theme={isDarkMode ? 'dark' : 'light'} />
                                             </div>
                                         )}
                                         {showStickerPicker && (
-                                            <div style={{position: 'absolute', bottom: '100%', left: '30px', zIndex: 100, marginBottom: '10px', background: 'var(--glass-bg)', padding: '10px', borderRadius: '8px', display: 'flex', gap: '8px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)'}}>
+                                            <div style={{position: 'absolute', bottom: '100%', left: '0', zIndex: 100, marginBottom: '10px', background: 'var(--glass-bg)', padding: '10px', borderRadius: '8px', display: 'flex', gap: '8px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)'}}>
                                                 {STICKERS.map((s, i) => (
                                                     <img key={i} src={s} alt="Sticker" style={{width: '60px', height: '60px', cursor: 'pointer', borderRadius: '4px'}} onClick={() => sendSticker(s)} />
                                                 ))}
                                             </div>
                                         )}
-                                        <Smile size={20} style={{color: 'var(--text-secondary)', marginRight: '8px', cursor: 'pointer'}} onClick={() => {setShowEmojiPicker(!showEmojiPicker); setShowStickerPicker(false);}} />
-                                        <Sticker size={20} style={{color: 'var(--text-secondary)', marginRight: '12px', cursor: 'pointer'}} onClick={() => {setShowStickerPicker(!showStickerPicker); setShowEmojiPicker(false);}} />
+                                        
                                         <input
                                             type="text"
-                                            placeholder={getText('typeMessage')}
+                                            placeholder="Aa"
                                             value={newMessage}
                                             onChange={handleMessageChange}
+                                            style={{flex: 1, background: 'transparent', border: 'none', outline: 'none', color: 'var(--text-primary)', fontSize: '15px'}}
                                         />
-                                        <div className="input-actions">
-                                            <label style={{cursor: 'pointer', display: 'flex', alignItems: 'center'}} title={getText('attachImage')}>
-                                                <Paperclip size={20} />
-                                                <input type="file" style={{display: 'none'}} accept="image/*" onChange={handleImageUpload} />
-                                            </label>
-                                            <label style={{cursor: 'pointer', display: 'flex', alignItems: 'center'}} title={getText('attachDoc')}>
-                                                <Folder size={20} />
-                                                <input type="file" style={{display: 'none'}} accept=".pdf,.doc,.docx,.xls,.xlsx,.zip,.txt" onChange={handleDocumentUpload} />
-                                            </label>
-                                            <Mic size={20} style={{cursor: 'pointer', color: isRecording ? '#ef4444' : 'var(--text-secondary)'}} onClick={handleVoiceRecord} title={getText('record')} />
-                                            <button type="submit" className="btn-send" disabled={!newMessage.trim()}>
-                                                <span style={{fontWeight: 'bold', fontSize: '14px'}}>{getText('send')}</span>
-                                            </button>
-                                        </div>
+                                        <Smile size={24} style={{color: 'var(--primary-color)', cursor: 'pointer', marginLeft: '8px'}} onClick={() => {setShowEmojiPicker(!showEmojiPicker); setShowStickerPicker(false);}} />
+                                    </div>
+                                    <div className="input-actions">
+                                        <button type="submit" style={{background: 'transparent', border: 'none', color: 'var(--primary-color)', cursor: 'pointer', display: 'flex', alignItems: 'center'}} disabled={!newMessage.trim()}>
+                                            <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
+                                                <path d="M16.6915026,12.4744748 L3.22625384,8.02870234 C2.51181073,7.79274323 2.50293116,6.72121334 3.21041183,6.48002013 L21.0822606,0.38076615 C21.8021815,0.134988017 22.4419912,0.854084343 22.1098679,1.54228966 L15.6568853,14.9126487 C15.3418579,15.5652599 14.3644917,15.5032532 14.1374521,14.8197779 L11.7588726,7.66699222 L16.6915026,12.4744748 Z"></path>
+                                            </svg>
+                                        </button>
                                     </div>
                                 </form>
                             </div>
                         </>
                     ) : (
                         <div style={{height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--text-secondary)'}}>
-                            {activeTab === 'home' ? (
-                                <>
-                                    <Home size={64} style={{marginBottom: '16px', opacity: 0.5}} />
-                                    <h2>{getText('welcome')}</h2>
-                                    <p>{getText('dashboardEmpty')}</p>
-                                </>
-                            ) : (
-                                <>
-                                    <MessageSquare size={64} style={{marginBottom: '16px', opacity: 0.5}} />
-                                    <h2>Select a chat</h2>
-                                    <p>Choose a friend from the left panel to start messaging.</p>
-                                </>
-                            )}
+                            <MessageSquare size={64} style={{marginBottom: '16px', opacity: 0.5}} />
+                            <h2>{getText('selectChat')}</h2>
+                            <p>{getText('selectChatDesc')}</p>
                         </div>
                     )}
                 </main>
@@ -1263,53 +1372,69 @@ const handleMessageChange = (e) => {
                 {/* COLUMN 4: CONVERSATION DETAILS PANE */}
                 {selectedFriend && activeTab !== 'profile' && (
                     <aside className="conversation-details-pane">
-                        <div className="details-header">
-                            <h3>{getText("conversation")}</h3>
-                        </div>
-                        <div className="details-profile">
-                            <div className="chat-avatar" style={{width: '80px', height: '80px', margin: '0 auto 16px', background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '50%', color: 'white', position: 'relative'}}>
-                                {selectedFriend.AvatarUrl ? <img src={`http://${window.location.hostname}:5000${selectedFriend.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%'}}/> : <UserIcon size={40} />}
+                        <div className="details-profile" style={{display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: '32px'}}>
+                            <div className="chat-avatar" style={{width: '72px', height: '72px', margin: '0 auto 12px', background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '50%', color: 'white', position: 'relative'}}>
+                                {selectedFriend.AvatarUrl ? <img src={`http://${window.location.hostname}:5000${selectedFriend.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%'}}/> : <UserIcon size={36} />}
+                                <div className="chat-status-dot" style={{position: 'absolute', bottom: '2px', right: '2px', border: '3px solid var(--bg-color)', background: onlineUsers.has(selectedFriend.Id) ? '#22c55e' : '#94a3b8', width: '16px', height: '16px', borderRadius: '50%'}}></div>
                             </div>
-                            <h3 style={{margin: '0 0 8px', fontSize: '18px'}}>{selectedFriend.FullName || selectedFriend.Username}</h3>
-                            <div style={{display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', color: 'var(--text-secondary)', fontSize: '14px', marginBottom: '16px'}}>
-                                <div className="chat-status-dot" style={{position: 'relative', bottom: 0, right: 0, border: 'none', background: onlineUsers.has(selectedFriend.Id) ? '#22c55e' : '#94a3b8', width: '10px', height: '10px'}}></div>
-                                {onlineUsers.has(selectedFriend.Id) ? 'Online' : 'Offline'}
+                            <h3 style={{margin: '0 0 4px', fontSize: '20px', fontWeight: '600', color: 'var(--text-primary)'}}>{selectedFriend.FullName || selectedFriend.Username}</h3>
+                            <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '24px'}}>
+                                <span>{onlineUsers.has(selectedFriend.Id) ? 'Đang hoạt động' : 'Không hoạt động'}</span>
                             </div>
-                            <p style={{color: 'var(--text-primary)', fontSize: '14px', fontStyle: 'italic', margin: '0 0 24px', padding: '0 24px', textAlign: 'center'}}>
-                                {selectedFriend.Bio || 'Software Engineer Student'}
-                            </p>
-                        </div>
-
-                        {!selectedFriend.IsGroup && (
-                            <div className="details-actions-row">
-                                <div className="details-action-btn" onClick={() => initiateCall('audio')}>
-                                    <Phone size={20} />
-                                    <span>{getText("audioCall")}</span>
+                            
+                            <div className="details-actions-row" style={{display: 'flex', justifyContent: 'center', gap: '32px', marginBottom: '24px'}}>
+                                <div className="details-action-btn" onClick={() => {}} style={{display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer', gap: '8px'}}>
+                                    <div style={{width: '36px', height: '36px', borderRadius: '50%', background: 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+                                        <UserIcon size={20} color="var(--text-primary)" />
+                                    </div>
+                                    <span style={{fontSize: '12px', color: 'var(--text-secondary)'}}>Trang cá nhân</span>
                                 </div>
-                                <div className="details-action-btn" onClick={() => initiateCall('video')}>
-                                    <Video size={20} />
-                                    <span>{getText("videoCall")}</span>
+                                <div className="details-action-btn" onClick={handleMuteUser} style={{display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer', gap: '8px'}}>
+                                    <div style={{width: '36px', height: '36px', borderRadius: '50%', background: 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+                                        <BellOff size={20} color="var(--text-primary)" />
+                                    </div>
+                                    <span style={{fontSize: '12px', color: 'var(--text-secondary)'}}>Tắt thông báo</span>
                                 </div>
-                            </div>
-                        )}
-
-                        <div className="details-section">
-                            <div className="details-menu-item" onClick={handleMuteUser}>
-                                <BellOff size={18} /> <span>{mutedUsers.includes(selectedFriend.Id) ? 'Unmute Notification' : 'Mute Notification'}</span>
-                            </div>
-                            <div className="details-menu-item" style={{color: '#ef4444'}} onClick={handleBlockUser}>
-                                <Ban size={18} /> <span>{getText("blockUser")}</span>
-                            </div>
-                            <div className="details-menu-item" style={{color: '#ef4444'}} onClick={handleDeleteChat}>
-                                <Trash2 size={18} /> <span>{getText("deleteChat")}</span>
+                                <div className="details-action-btn" onClick={() => {}} style={{display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer', gap: '8px'}}>
+                                    <div style={{width: '36px', height: '36px', borderRadius: '50%', background: 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+                                        <Search size={20} color="var(--text-primary)" />
+                                    </div>
+                                    <span style={{fontSize: '12px', color: 'var(--text-secondary)'}}>Tìm kiếm</span>
+                                </div>
                             </div>
                         </div>
 
-                        <div className="details-section">
-                            <h4 className="details-section-title">Search Messages</h4>
-                            <div className="search-bar" style={{margin: 0}}>
-                                <Search size={16} className="search-icon" color="var(--text-secondary)" />
-                                <input type="text" placeholder={getText("searchDots")} value={searchMessageTerm} onChange={e => setSearchMessageTerm(e.target.value)} />
+                        <div className="details-accordion-menu" style={{display: 'flex', flexDirection: 'column'}}>
+                            <div className="details-section-header" style={{display: 'flex', justifyContent: 'space-between', padding: '12px 16px', cursor: 'pointer', borderRadius: '8px', margin: '0 8px'}} onMouseOver={e => e.currentTarget.style.background='rgba(255,255,255,0.05)'} onMouseOut={e => e.currentTarget.style.background='transparent'}>
+                                <span style={{fontWeight: '600', fontSize: '14px', color: 'var(--text-primary)'}}>Thông tin về đoạn chat</span>
+                                <ChevronDown size={20} color="var(--text-secondary)" />
+                            </div>
+                            <div className="details-section-header" style={{display: 'flex', justifyContent: 'space-between', padding: '12px 16px', cursor: 'pointer', borderRadius: '8px', margin: '0 8px'}} onMouseOver={e => e.currentTarget.style.background='rgba(255,255,255,0.05)'} onMouseOut={e => e.currentTarget.style.background='transparent'}>
+                                <span style={{fontWeight: '600', fontSize: '14px', color: 'var(--text-primary)'}}>Tùy chỉnh đoạn chat</span>
+                                <ChevronDown size={20} color="var(--text-secondary)" />
+                            </div>
+                            <div className="details-section-header" style={{display: 'flex', justifyContent: 'space-between', padding: '12px 16px', cursor: 'pointer', borderRadius: '8px', margin: '0 8px'}} onMouseOver={e => e.currentTarget.style.background='rgba(255,255,255,0.05)'} onMouseOut={e => e.currentTarget.style.background='transparent'}>
+                                <span style={{fontWeight: '600', fontSize: '14px', color: 'var(--text-primary)'}}>File phương tiện, file và liên kết</span>
+                                <ChevronDown size={20} color="var(--text-secondary)" />
+                            </div>
+                            <div className="details-section-header" style={{display: 'flex', justifyContent: 'space-between', padding: '12px 16px', cursor: 'pointer', borderRadius: '8px', margin: '0 8px'}} onMouseOver={e => e.currentTarget.style.background='rgba(255,255,255,0.05)'} onMouseOut={e => e.currentTarget.style.background='transparent'} onClick={() => {
+                                const el = document.getElementById('privacy-options');
+                                el.style.display = el.style.display === 'none' ? 'block' : 'none';
+                            }}>
+                                <span style={{fontWeight: '600', fontSize: '14px', color: 'var(--text-primary)'}}>Quyền riêng tư & hỗ trợ</span>
+                                <ChevronDown size={20} color="var(--text-secondary)" />
+                            </div>
+                            <div id="privacy-options" style={{display: 'block', padding: '0 16px'}}>
+                                <div className="details-menu-item" onClick={handleArchiveChat}>
+                                    <Archive size={18} /> 
+                                    <span>{selectedFriend.IsArchived ? 'Bỏ lưu trữ đoạn chat' : 'Lưu trữ đoạn chat'}</span>
+                                </div>
+                                <div className="details-menu-item" style={{color: '#ef4444'}} onClick={handleBlockUser}>
+                                    <Ban size={18} /> <span>{getText("blockUser")}</span>
+                                </div>
+                                <div className="details-menu-item" style={{color: '#ef4444'}} onClick={handleDeleteChat}>
+                                    <Trash2 size={18} /> <span>{getText("deleteChat")}</span>
+                                </div>
                             </div>
                         </div>
 
@@ -1439,89 +1564,88 @@ const handleMessageChange = (e) => {
             {/* Edit Profile Modal */}
             {isEditingProfile && (
                 <div className="modal-overlay" onClick={() => setIsEditingProfile(false)} style={{position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(5px)'}}>
-                    <div className="modal-content" onClick={e => e.stopPropagation()} style={{background: 'var(--glass-bg)', padding: '32px', borderRadius: '24px', width: '400px', border: '1px solid var(--glass-border)', boxShadow: '0 8px 32px rgba(0,0,0,0.2)'}}>
-                        <h2 style={{marginTop: 0, marginBottom: '24px', color: 'var(--text-primary)'}}>Edit Profile</h2>
+                    <div className="modal-content" onClick={e => e.stopPropagation()} style={{background: 'var(--glass-bg)', padding: '32px', borderRadius: '24px', width: '500px', maxHeight: '90vh', overflowY: 'auto', border: '1px solid var(--glass-border)', boxShadow: '0 8px 32px rgba(0,0,0,0.2)'}}>
+                        <h2 style={{marginTop: 0, marginBottom: '24px', color: 'var(--text-primary)', fontSize: '24px', textAlign: 'center'}}>Chỉnh sửa hồ sơ</h2>
                         
+                        {editProfileError && <div style={{background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', padding: '12px', borderRadius: '8px', marginBottom: '20px', textAlign: 'center', fontSize: '14px', border: '1px solid rgba(239, 68, 68, 0.3)'}}>{editProfileError}</div>}
+
                         <div style={{marginBottom: '16px'}}>
-                            <label style={{display: 'block', marginBottom: '8px', color: 'var(--text-secondary)', fontSize: '14px'}}>Full Name</label>
+                            <label style={{display: 'block', marginBottom: '8px', color: 'var(--text-secondary)', fontSize: '15px', fontWeight: '500'}}>Username</label>
+                            <input 
+                                type="text" 
+                                value={editProfileData.Username} 
+                                onChange={e => setEditProfileData({...editProfileData, Username: e.target.value})}
+                                style={{width: '100%', padding: '12px', borderRadius: '12px', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--glass-border)', color: 'var(--text-primary)', outline: 'none', fontSize: '15px'}}
+                                placeholder="Nhập username của bạn..."
+                            />
+                        </div>
+
+                        <div style={{marginBottom: '16px'}}>
+                            <label style={{display: 'block', marginBottom: '8px', color: 'var(--text-secondary)', fontSize: '15px', fontWeight: '500'}}>Email</label>
+                            <input 
+                                type="email" 
+                                value={editProfileData.Email} 
+                                onChange={e => setEditProfileData({...editProfileData, Email: e.target.value})}
+                                style={{width: '100%', padding: '12px', borderRadius: '12px', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--glass-border)', color: 'var(--text-primary)', outline: 'none', fontSize: '15px'}}
+                                placeholder="Nhập email của bạn..."
+                            />
+                        </div>
+
+                        <div style={{marginBottom: '16px'}}>
+                            <label style={{display: 'block', marginBottom: '8px', color: 'var(--text-secondary)', fontSize: '15px', fontWeight: '500'}}>Họ và tên</label>
                             <input 
                                 type="text" 
                                 value={editProfileData.FullName} 
                                 onChange={e => setEditProfileData({...editProfileData, FullName: e.target.value})}
-                                style={{width: '100%', padding: '12px 16px', borderRadius: '12px', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--glass-border)', color: 'var(--text-primary)', outline: 'none'}}
+                                style={{width: '100%', padding: '12px', borderRadius: '12px', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--glass-border)', color: 'var(--text-primary)', outline: 'none', fontSize: '15px'}}
+                                placeholder="Nhập họ và tên của bạn..."
                             />
                         </div>
 
-                        <div style={{marginBottom: '24px'}}>
-                            <label style={{display: 'block', marginBottom: '8px', color: 'var(--text-secondary)', fontSize: '14px'}}>Bio</label>
+                        <div style={{marginBottom: '16px'}}>
+                            <label style={{display: 'block', marginBottom: '8px', color: 'var(--text-secondary)', fontSize: '15px', fontWeight: '500'}}>Ngày sinh</label>
+                            <input 
+                                type="date" 
+                                value={editProfileData.DateOfBirth} 
+                                onChange={e => setEditProfileData({...editProfileData, DateOfBirth: e.target.value})}
+                                style={{width: '100%', padding: '12px', borderRadius: '12px', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--glass-border)', color: 'var(--text-primary)', outline: 'none', fontSize: '15px'}}
+                            />
+                        </div>
+
+                        <div style={{marginBottom: '20px'}}>
+                            <label style={{display: 'block', marginBottom: '8px', color: 'var(--text-secondary)', fontSize: '15px', fontWeight: '500'}}>Tiểu sử</label>
                             <textarea 
                                 value={editProfileData.Bio} 
                                 onChange={e => setEditProfileData({...editProfileData, Bio: e.target.value})}
-                                rows={4}
-                                style={{width: '100%', padding: '12px 16px', borderRadius: '12px', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--glass-border)', color: 'var(--text-primary)', outline: 'none', resize: 'vertical'}}
+                                rows={3}
+                                style={{width: '100%', padding: '12px', borderRadius: '12px', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--glass-border)', color: 'var(--text-primary)', outline: 'none', resize: 'vertical', fontSize: '15px'}}
+                                placeholder="Viết vài dòng giới thiệu về bản thân..."
                             />
                         </div>
 
-                        <div style={{display: 'flex', gap: '12px', justifyContent: 'flex-end'}}>
-                            <button onClick={() => setIsEditingProfile(false)} style={{padding: '10px 20px', borderRadius: '12px', background: 'transparent', border: '1px solid var(--glass-border)', color: 'var(--text-primary)', cursor: 'pointer'}}>Cancel</button>
-                            <button onClick={handleSaveProfile} style={{padding: '10px 20px', borderRadius: '12px', background: 'var(--primary-color)', border: 'none', color: 'white', cursor: 'pointer', fontWeight: 'bold'}}>Save</button>
+                        {((editProfileData.Username !== (user.Username || '')) || (editProfileData.Email !== (user.Email || ''))) && (
+                            <div style={{marginBottom: '24px', padding: '16px', borderRadius: '12px', background: 'rgba(239, 68, 68, 0.05)', border: '1px solid rgba(239, 68, 68, 0.2)'}}>
+                                <label style={{display: 'block', marginBottom: '8px', color: '#ef4444', fontSize: '15px', fontWeight: 'bold'}}>Xác nhận mật khẩu</label>
+                                <div style={{fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '12px'}}>Bạn cần nhập mật khẩu hiện tại để thay đổi Username hoặc Email.</div>
+                                <input 
+                                    type="password" 
+                                    value={editProfileData.Password} 
+                                    onChange={e => setEditProfileData({...editProfileData, Password: e.target.value})} 
+                                    placeholder="Nhập mật khẩu..." 
+                                    style={{width: '100%', padding: '12px', borderRadius: '12px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(239, 68, 68, 0.4)', color: 'var(--text-primary)', outline: 'none', fontSize: '15px'}} 
+                                />
+                            </div>
+                        )}
+
+                        <div style={{display: 'flex', gap: '16px', justifyContent: 'flex-end'}}>
+                            <button onClick={() => setIsEditingProfile(false)} style={{padding: '12px 24px', borderRadius: '12px', background: 'transparent', border: '1px solid var(--glass-border)', color: 'var(--text-primary)', cursor: 'pointer', fontSize: '15px'}}>Hủy</button>
+                            <button onClick={handleSaveProfile} style={{padding: '12px 24px', borderRadius: '12px', background: 'var(--primary-color)', border: 'none', color: 'white', cursor: 'pointer', fontWeight: 'bold', fontSize: '15px'}}>Lưu thay đổi</button>
                         </div>
                     </div>
                 </div>
             )}
 
             
-            {/* Create Group Modal */}
-            {isCreateGroupModalOpen && (
-                <div className="modal-overlay" style={{
-                    position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-                    backgroundColor: 'rgba(0, 0, 0, 0.6)', backdropFilter: 'blur(4px)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    zIndex: 100000
-                }}>
-                    <div className="modal-content" style={{
-                        background: 'var(--glass-bg)', padding: '32px',
-                        borderRadius: '16px', maxWidth: '400px', width: '90%',
-                        boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.2)',
-                        border: '1px solid var(--glass-border)'
-                    }}>
-                        <h3 style={{ margin: '0 0 16px', fontSize: '20px', color: 'var(--text-primary)', textAlign: 'center' }}>Create Group</h3>
-                        
-                        <div style={{marginBottom: '16px'}}>
-                            <label style={{display: 'block', marginBottom: '8px', color: 'var(--text-secondary)', fontSize: '14px'}}>Group Name</label>
-                            <input 
-                                type="text" 
-                                value={newGroupName} 
-                                onChange={(e) => setNewGroupName(e.target.value)}
-                                placeholder="Enter group name"
-                                style={{width: '100%', padding: '12px 16px', borderRadius: '12px', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--glass-border)', color: 'var(--text-primary)', outline: 'none'}}
-                            />
-                        </div>
-
-                        <div style={{marginBottom: '24px', maxHeight: '150px', overflowY: 'auto'}}>
-                            <label style={{display: 'block', marginBottom: '8px', color: 'var(--text-secondary)', fontSize: '14px'}}>Select Members</label>
-                            {friendsList.filter(f => f.Status === 'accepted').map(friend => (
-                                <label key={friend.Id} style={{display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', color: 'var(--text-primary)', cursor: 'pointer'}}>
-                                    <input 
-                                        type="checkbox" 
-                                        checked={newGroupMembers.includes(friend.Id)}
-                                        onChange={(e) => {
-                                            if (e.target.checked) setNewGroupMembers([...newGroupMembers, friend.Id]);
-                                            else setNewGroupMembers(newGroupMembers.filter(id => id !== friend.Id));
-                                        }}
-                                    />
-                                    {friend.FullName || friend.Username}
-                                </label>
-                            ))}
-                        </div>
-
-                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
-                            <button onClick={() => setIsCreateGroupModalOpen(false)} style={{padding: '10px 20px', borderRadius: '12px', background: 'transparent', border: '1px solid var(--glass-border)', color: 'var(--text-primary)', cursor: 'pointer', fontWeight: 'bold'}}>Cancel</button>
-                            <button onClick={handleCreateGroup} style={{padding: '10px 20px', borderRadius: '12px', background: 'var(--primary-color)', border: 'none', color: 'white', cursor: 'pointer', fontWeight: 'bold'}}>Create</button>
-                        </div>
-                    </div>
-                </div>
-            )}
 
             {/* Custom Confirm Dialog Modal */}
             {confirmDialog.isOpen && (
@@ -1557,6 +1681,219 @@ const handleMessageChange = (e) => {
                             }} onMouseOver={e => e.target.style.transform = 'translateY(-1px)'} onMouseOut={e => e.target.style.transform = 'translateY(0)'}>
                                 {confirmDialog.title}
                             </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Blocked Users Modal */}
+            {showBlockedModal && (
+                <div className="modal-overlay" onClick={() => setShowBlockedModal(false)} style={{position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+                    <div className="modal-content settings-modal-content" onClick={e => e.stopPropagation()}>
+                        <div className="settings-modal-header" style={{display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px', borderBottom: '1px solid var(--glass-border)', position: 'relative'}}>
+                            <h2 style={{margin: 0, fontSize: '18px', fontWeight: 'bold'}}>Danh sách chặn</h2>
+                            <button onClick={() => setShowBlockedModal(false)} style={{position: 'absolute', right: '16px', background: 'rgba(255,255,255,0.1)', border: 'none', width: '32px', height: '32px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-primary)', cursor: 'pointer'}}>
+                                <X size={20} />
+                            </button>
+                        </div>
+                        <div className="settings-modal-body" style={{padding: '24px', overflowY: 'auto', maxHeight: '70vh'}}>
+                            {(() => {
+                                const blockedUsers = friendsList.filter(f => f.Status === 'blocked' && String(f.RequesterId) === String(user.Id));
+                                if (blockedUsers.length === 0) return <div style={{color: 'var(--text-secondary)', fontSize: '14px', textAlign: 'center', marginTop: '20px'}}>Bạn chưa chặn ai cả.</div>;
+                                return (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                                        {blockedUsers.map(blocked => (
+                                            <div key={blocked.Id} style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px', background: 'rgba(255,255,255,0.05)', borderRadius: '12px'}}>
+                                                <div style={{display: 'flex', alignItems: 'center', gap: '12px'}}>
+                                                    <div style={{width: '40px', height: '40px', borderRadius: '50%', background: 'var(--glass-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden'}}>
+                                                        {blocked.AvatarUrl ? <img src={`http://${window.location.hostname}:5000${blocked.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : <UserIcon size={20} />}
+                                                    </div>
+                                                    <span style={{fontSize: '15px', fontWeight: '500'}}>{blocked.FullName || blocked.Username}</span>
+                                                </div>
+                                                <button onClick={() => unblockUser(blocked.Id)} style={{background: 'rgba(255,255,255,0.1)', border: '1px solid var(--glass-border)', borderRadius: '8px', padding: '6px 16px', cursor: 'pointer', color: 'var(--text-primary)', fontSize: '13px', transition: 'all 0.2s'}}>
+                                                    Bỏ chặn
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                );
+                            })()}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Policy Modal */}
+            {showPolicyModal && (
+                <div className="modal-overlay" onClick={() => setShowPolicyModal(false)} style={{position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+                    <div className="modal-content settings-modal-content" onClick={e => e.stopPropagation()}>
+                        <div className="settings-modal-header" style={{display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px', borderBottom: '1px solid var(--glass-border)', position: 'relative'}}>
+                            <h2 style={{margin: 0, fontSize: '18px', fontWeight: 'bold'}}>
+                                {policyType === 'privacy' ? 'Chính sách quyền riêng tư' : policyType === 'terms' ? 'Điều khoản sử dụng' : 'Chính sách về cookie'}
+                            </h2>
+                            <button onClick={() => setShowPolicyModal(false)} style={{position: 'absolute', right: '16px', background: 'rgba(255,255,255,0.1)', border: 'none', width: '32px', height: '32px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-primary)', cursor: 'pointer'}}>
+                                <X size={20} />
+                            </button>
+                        </div>
+                        <div className="settings-modal-body" style={{padding: '24px', overflowY: 'auto', maxHeight: '70vh', lineHeight: '1.6'}}>
+                            {policyType === 'privacy' && (
+                                <div>
+                                    <h3 style={{marginBottom: '8px', marginTop: '0'}}>Bảo vệ Dữ liệu Của Bạn</h3>
+                                    <p style={{marginBottom: '16px', color: 'var(--text-secondary)'}}>Chúng tôi coi trọng quyền riêng tư của bạn. Dữ liệu cá nhân bao gồm thông tin đăng nhập, tin nhắn và danh sách bạn bè được mã hóa và bảo vệ an toàn.</p>
+                                    <h3 style={{marginBottom: '8px'}}>Thu Thập Thông Tin</h3>
+                                    <p style={{marginBottom: '16px', color: 'var(--text-secondary)'}}>Chúng tôi chỉ thu thập thông tin cần thiết để cung cấp dịch vụ nhắn tin, bao gồm địa chỉ email để khôi phục mật khẩu và tên hiển thị.</p>
+                                    <h3 style={{marginBottom: '8px'}}>Chia Sẻ Dữ Liệu</h3>
+                                    <p style={{marginBottom: '0', color: 'var(--text-secondary)'}}>VibeChat cam kết không chia sẻ dữ liệu của bạn cho bất kỳ bên thứ ba nào vì mục đích quảng cáo hoặc thương mại.</p>
+                                </div>
+                            )}
+                            {policyType === 'terms' && (
+                                <div>
+                                    <h3 style={{marginBottom: '8px', marginTop: '0'}}>Chấp Nhận Điều Khoản</h3>
+                                    <p style={{marginBottom: '16px', color: 'var(--text-secondary)'}}>Bằng việc sử dụng VibeChat, bạn đồng ý tuân thủ các quy định về hành vi chuẩn mực trên không gian mạng.</p>
+                                    <h3 style={{marginBottom: '8px'}}>Hành Vi Bị Cấm</h3>
+                                    <p style={{marginBottom: '16px', color: 'var(--text-secondary)'}}>Nghiêm cấm mọi hành vi gửi tin nhắn quấy rối, đe dọa, phát tán mã độc hoặc nội dung vi phạm pháp luật.</p>
+                                    <h3 style={{marginBottom: '8px'}}>Chấm Dứt Sử Dụng</h3>
+                                    <p style={{marginBottom: '0', color: 'var(--text-secondary)'}}>Chúng tôi có quyền vô hiệu hóa tài khoản của bạn nếu phát hiện vi phạm nghiêm trọng các điều khoản này.</p>
+                                </div>
+                            )}
+                            {policyType === 'cookie' && (
+                                <div>
+                                    <h3 style={{marginBottom: '8px', marginTop: '0'}}>Sử Dụng Cookie</h3>
+                                    <p style={{marginBottom: '16px', color: 'var(--text-secondary)'}}>VibeChat sử dụng các phiên (sessions) và local storage (như localStorage) để duy trì trạng thái đăng nhập và các cài đặt cá nhân (chế độ tối, ngôn ngữ).</p>
+                                    <h3 style={{marginBottom: '8px'}}>Kiểm Soát Dữ Liệu</h3>
+                                    <p style={{marginBottom: '0', color: 'var(--text-secondary)'}}>Bạn có thể xóa toàn bộ dữ liệu này bằng cách Đăng xuất hoặc xóa dữ liệu duyệt web trong trình duyệt của mình.</p>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Settings Modal (Tùy chọn) */}
+            {showSettingsModal && (
+                <div className="modal-overlay" onClick={() => setShowSettingsModal(false)} style={{position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+                    <div className="modal-content settings-modal-content" onClick={e => e.stopPropagation()}>
+                        <div className="settings-modal-header" style={{display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px', borderBottom: '1px solid var(--glass-border)', position: 'relative'}}>
+                            <h2 style={{margin: 0, fontSize: '18px', fontWeight: 'bold'}}>Tùy chọn</h2>
+                            <button onClick={() => setShowSettingsModal(false)} style={{position: 'absolute', right: '16px', background: 'rgba(255,255,255,0.1)', border: 'none', width: '32px', height: '32px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-primary)', cursor: 'pointer'}}>
+                                <X size={20} />
+                            </button>
+                        </div>
+                        
+                        <div className="settings-modal-body" style={{padding: '16px', overflowY: 'auto', maxHeight: '70vh'}}>
+                            {/* Tài khoản */}
+                            <div className="settings-section">
+                                <h3 className="settings-section-title">Tài khoản</h3>
+                                <div className="settings-account-info" onClick={() => setShowAccountDetails(!showAccountDetails)} style={{display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 0', cursor: 'pointer'}}>
+                                    <div style={{width: '40px', height: '40px', borderRadius: '50%', overflow: 'hidden', background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+                                        {user.AvatarUrl ? <img src={`http://${window.location.hostname}:5000${user.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : <UserIcon size={24} color="white"/>}
+                                    </div>
+                                    <div style={{flex: 1}}>
+                                        <div style={{fontWeight: 'bold', fontSize: '16px'}}>{user.FullName || user.Username}</div>
+                                        <div style={{color: 'var(--text-secondary)', fontSize: '13px'}}>{showAccountDetails ? 'Ẩn thông tin' : 'Xem thông tin tài khoản'}</div>
+                                    </div>
+                                </div>
+                                {showAccountDetails && (
+                                    <div style={{padding: '12px', background: 'rgba(255,255,255,0.05)', borderRadius: '8px', marginTop: '8px'}}>
+                                        <div style={{display: 'flex', flexDirection: 'column', gap: '8px'}}>
+                                            <div><span style={{color: 'var(--text-secondary)', fontSize: '13px'}}>Username:</span> <br/> <strong>{user.Username}</strong></div>
+                                            <div><span style={{color: 'var(--text-secondary)', fontSize: '13px'}}>Tên đầy đủ:</span> <br/> <strong>{user.FullName || 'Chưa cập nhật'}</strong></div>
+                                            <div><span style={{color: 'var(--text-secondary)', fontSize: '13px'}}>Email:</span> <br/> <strong>{user.Email || 'Chưa cập nhật'}</strong></div>
+                                            <div><span style={{color: 'var(--text-secondary)', fontSize: '13px'}}>Ngày sinh:</span> <br/> <strong>{user.DateOfBirth ? new Date(user.DateOfBirth).toLocaleDateString() : 'Chưa cập nhật'}</strong></div>
+                                        </div>
+                                        <button onClick={() => { setShowSettingsModal(false); setEditProfileData({ FullName: user.FullName || '', Bio: user.Bio || '', Username: user.Username || '', Email: user.Email || '', DateOfBirth: user.DateOfBirth ? user.DateOfBirth.split('T')[0] : '', Password: '' }); setEditProfileError(''); setIsEditingProfile(true); }} style={{marginTop: '12px', background: 'var(--primary-color)', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: 'bold', width: '100%'}}>
+                                            Chỉnh sửa hồ sơ
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                            
+                            <hr className="settings-divider" />
+
+                            {/* Trạng thái hoạt động */}
+                            <div className="settings-section" style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0'}}>
+                                <div style={{display: 'flex', alignItems: 'center', gap: '12px'}}>
+                                    <Circle size={20} />
+                                    <span style={{fontWeight: '500'}}>Trạng thái hoạt động: {showStatus ? 'ĐANG BẬT' : 'ĐANG TẮT'}</span>
+                                </div>
+                                <label className="toggle-switch">
+                                    <input type="checkbox" checked={showStatus} onChange={(e) => setShowStatus(e.target.checked)} />
+                                    <span className="slider"></span>
+                                </label>
+                            </div>
+
+                            <hr className="settings-divider" />
+
+                            {/* Thông báo */}
+                            <div className="settings-section">
+                                <h3 className="settings-section-title">Thông báo</h3>
+                                <div style={{display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '12px 0'}}>
+                                    <div style={{display: 'flex', alignItems: 'flex-start', gap: '12px'}}>
+                                        <Bell size={20} style={{marginTop: '4px'}} />
+                                        <div>
+                                            <div style={{fontWeight: '500', marginBottom: '4px'}}>Âm thanh thông báo</div>
+                                            <div style={{color: 'var(--text-secondary)', fontSize: '13px', lineHeight: '1.4'}}>Dùng thông báo bằng âm thanh để biết về tin nhắn, cuộc gọi đến.</div>
+                                        </div>
+                                    </div>
+                                    <label className="toggle-switch">
+                                        <input type="checkbox" checked={soundEnabled} onChange={(e) => setSoundEnabled(e.target.checked)} />
+                                        <span className="slider"></span>
+                                    </label>
+                                </div>
+                            </div>
+
+                            <hr className="settings-divider" />
+
+                            {/* Chế độ tối */}
+                            <div className="settings-section">
+                                <div style={{display: 'flex', alignItems: 'flex-start', gap: '12px', padding: '12px 0'}}>
+                                    <Moon size={20} style={{marginTop: '4px'}} />
+                                    <div style={{flex: 1}}>
+                                        <div style={{fontWeight: '500', marginBottom: '4px'}}>Chế độ tối</div>
+                                        <div style={{color: 'var(--text-secondary)', fontSize: '13px', lineHeight: '1.4', marginBottom: '16px'}}>Điều chỉnh giao diện của VibeChat để giảm độ chói và cho đôi mắt được nghỉ ngơi.</div>
+                                        
+                                        <div className="radio-group" style={{display: 'flex', flexDirection: 'column', gap: '16px'}}>
+                                            <label style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer'}}>
+                                                <span>Tắt</span>
+                                                <input type="radio" name="darkmode" checked={!isDarkMode} onChange={() => setIsDarkMode(false)} className="custom-radio" />
+                                            </label>
+                                            <label style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer'}}>
+                                                <span>Bật</span>
+                                                <input type="radio" name="darkmode" checked={isDarkMode} onChange={() => setIsDarkMode(true)} className="custom-radio" />
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+
+
+                            {/* Language */}
+                            <div className="settings-section" style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0'}}>
+                                <div style={{display: 'flex', alignItems: 'center', gap: '12px'}}>
+                                    <Settings size={20} />
+                                    <span style={{fontWeight: '500'}}>Ngôn ngữ / Language</span>
+                                </div>
+                                <select 
+                                    value={language} 
+                                    onChange={(e) => setLanguage(e.target.value)}
+                                    style={{background: 'rgba(255,255,255,0.1)', border: '1px solid var(--glass-border)', color: 'var(--text-primary)', padding: '6px 12px', borderRadius: '8px', outline: 'none'}}
+                                >
+                                    <option value="English">English</option>
+                                    <option value="Vietnamese">Vietnamese</option>
+                                    <option value="Japanese">Japanese</option>
+                                </select>
+                            </div>
+                            
+                            <hr className="settings-divider" />
+
+                            {/* Change password button inside settings */}
+                            <div className="settings-section" style={{padding: '12px 0'}}>
+                                <button className="btn-primary" style={{width: '100%', background: 'rgba(255,255,255,0.1)', border: '1px solid var(--glass-border)', color: 'var(--text-primary)', padding: '10px', borderRadius: '8px', cursor: 'pointer', fontWeight: '500'}} onClick={() => {setShowSettingsModal(false); setShowPasswordModal(true);}}>
+                                    Đổi mật khẩu
+                                </button>
+                            </div>
+
                         </div>
                     </div>
                 </div>

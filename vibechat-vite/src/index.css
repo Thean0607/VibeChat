@@ -13,15 +13,15 @@
 }
 
 .dark-theme {
-  --bg-color: #0f172a; /* Slate 900 */
-  --glass-bg: rgba(30, 41, 59, 0.7); /* Slate 800 with opacity */
-  --glass-border: rgba(255, 255, 255, 0.05);
-  --primary-color: #3b82f6; /* Blue 500 */
-  --primary-hover: #2563eb;
-  --text-primary: #f8fafc; /* Slate 50 */
-  --text-secondary: #94a3b8; /* Slate 400 */
-  --message-mine: #3b82f6;
-  --message-other: rgba(255, 255, 255, 0.1);
+  --bg-color: #18191a; /* Messenger background */
+  --glass-bg: #242526; /* Messenger panel bg */
+  --glass-border: rgba(255, 255, 255, 0.1);
+  --primary-color: #0084ff; /* Messenger blue */
+  --primary-hover: #0077e6;
+  --text-primary: #e4e6eb;
+  --text-secondary: #b0b3b8;
+  --message-mine: #0084ff;
+  --message-other: #3e4042;
 }
 
 * {

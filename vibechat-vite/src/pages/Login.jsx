@@ -169,29 +169,29 @@ const Login = ({ setUser }) => {
                     <div className="glass-panel auth-panel">
                         {showForgotPassword ? (
                             <div className="auth-header">
-                                <h2>Reset Password</h2>
-                                <p>Enter your email to receive a reset link</p>
+                                <h2>Đặt lại mật khẩu</h2>
+                                <p>Nhập email của bạn để nhận mã xác thực</p>
                                 
                                 {resetStep === 1 ? (
                                     <form onSubmit={handleForgotPassword} style={{marginTop: '24px'}}>
                                         <div className="input-group">
-                                            <input type="email" className="input-field" placeholder="Enter your email" value={resetEmail} onChange={e => setResetEmail(e.target.value)} required />
+                                            <input type="email" className="input-field" placeholder="Nhập địa chỉ email" value={resetEmail} onChange={e => setResetEmail(e.target.value)} required />
                                         </div>
-                                        <button type="submit" className="btn-primary login-btn">Send Reset Link</button>
+                                        <button type="submit" className="btn-primary login-btn">Gửi mã xác thực</button>
                                         {resetMessage && <p style={{marginTop: '12px', color: '#22c55e', fontSize: '14px'}}>{resetMessage}</p>}
-                                        <p style={{marginTop: '16px', fontSize: '14px', cursor: 'pointer', color: 'var(--primary-color)'}} onClick={() => setShowForgotPassword(false)}>Back to Login</p>
+                                        <p style={{marginTop: '16px', fontSize: '14px', cursor: 'pointer', color: 'var(--primary-color)'}} onClick={() => setShowForgotPassword(false)}>Quay lại Đăng nhập</p>
                                     </form>
                                 ) : (
                                     <form onSubmit={handleResetPassword} style={{marginTop: '24px'}}>
                                         <div className="input-group" style={{marginBottom: '16px'}}>
-                                            <input type="text" className="input-field" placeholder="Enter 6-digit OTP" value={otp} onChange={e => setOtp(e.target.value)} required />
+                                            <input type="text" className="input-field" placeholder="Nhập mã OTP 6 số" value={otp} onChange={e => setOtp(e.target.value)} required />
                                         </div>
                                         <div className="input-group">
-                                            <input type="password" className="input-field" placeholder="Enter New Password" value={newPassword} onChange={e => setNewPassword(e.target.value)} required minLength="6" />
+                                            <input type="password" className="input-field" placeholder="Nhập mật khẩu mới" value={newPassword} onChange={e => setNewPassword(e.target.value)} required minLength="6" />
                                         </div>
-                                        <button type="submit" className="btn-primary login-btn">Reset Password</button>
+                                        <button type="submit" className="btn-primary login-btn">Đặt lại mật khẩu</button>
                                         {resetMessage && <p style={{marginTop: '12px', color: '#22c55e', fontSize: '14px'}}>{resetMessage}</p>}
-                                        <p style={{marginTop: '16px', fontSize: '14px', cursor: 'pointer', color: 'var(--primary-color)'}} onClick={() => {setResetStep(1); setShowForgotPassword(false);}}>Cancel</p>
+                                        <p style={{marginTop: '16px', fontSize: '14px', cursor: 'pointer', color: 'var(--primary-color)'}} onClick={() => {setResetStep(1); setShowForgotPassword(false);}}>Hủy</p>
                                     </form>
                                 )}
 
@@ -345,7 +345,7 @@ const Login = ({ setUser }) => {
                         
                         {isLogin && (
                             <div style={{textAlign: 'right', marginTop: '8px', marginBottom: '16px'}}>
-                                <span style={{fontSize: '14px', color: 'var(--primary-color)', cursor: 'pointer'}} onClick={() => setShowForgotPassword(true)}>Forgot Password?</span>
+                                <span style={{fontSize: '14px', color: 'var(--primary-color)', cursor: 'pointer'}} onClick={() => setShowForgotPassword(true)}>Quên mật khẩu?</span>
                             </div>
                         )}
                         

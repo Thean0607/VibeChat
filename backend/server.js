@@ -7,6 +7,7 @@ const jwt = require('jsonwebtoken');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const nodemailer = require('nodemailer');
 require('dotenv').config();
 const { poolPromise, sql } = require('./db');
 
@@ -84,6 +85,8 @@ async function initDb() {
                     Bio NVARCHAR(1000) NULL,
                     Status NVARCHAR(50) DEFAULT 'offline',
                     LastLogin DATETIME NULL,
+                    ResetToken NVARCHAR(255) NULL,
+                    ResetTokenExpiry DATETIME NULL,
                     IsActive BIT DEFAULT 1,
                     CreatedAt DATETIME DEFAULT GETDATE(),
                     UpdatedAt DATETIME DEFAULT GETDATE()
@@ -108,6 +111,10 @@ async function initDb() {
                     ALTER TABLE Users ADD Bio NVARCHAR(1000) NULL;
                 IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[Users]') AND name = 'Status')
                     ALTER TABLE Users ADD Status NVARCHAR(50) DEFAULT 'offline';
+                IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[Users]') AND name = 'ResetToken')
+                    ALTER TABLE Users ADD ResetToken NVARCHAR(255) NULL;
+                IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[Users]') AND name = 'ResetTokenExpiry')
+                    ALTER TABLE Users ADD ResetTokenExpiry DATETIME NULL;
             END
         `);
         // Create Messages table
@@ -118,7 +125,7 @@ async function initDb() {
                     Id INT IDENTITY(1,1) PRIMARY KEY,
                     SenderId INT NOT NULL,
                     ReceiverId INT NULL,
-                    GroupId INT NULL,
+
                     Content NVARCHAR(MAX) NOT NULL,
                     ImageUrl NVARCHAR(MAX) NULL,
                     AttachmentUrl NVARCHAR(500) NULL,
@@ -144,8 +151,7 @@ async function initDb() {
                     ALTER TABLE Messages ADD ReceiverId INT NULL;
                     ALTER TABLE Messages ADD CONSTRAINT FK_Messages_Receiver FOREIGN KEY (ReceiverId) REFERENCES Users(Id);
                 END
-                IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[Messages]') AND name = 'GroupId')
-                    ALTER TABLE Messages ADD GroupId INT NULL;
+
                 IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[Messages]') AND name = 'AttachmentUrl')
                     ALTER TABLE Messages ADD AttachmentUrl NVARCHAR(500) NULL;
                 IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[Messages]') AND name = 'ReplyToMessageId')
@@ -195,35 +201,14 @@ async function initDb() {
             END
         `);
         
-        // Create Groups table
+        // Clean up old Group logic if exists
         await pool.request().query(`
-            IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='Groups' and xtype='U')
-            BEGIN
-                CREATE TABLE Groups (
-                    Id INT IDENTITY(1,1) PRIMARY KEY,
-                    Name NVARCHAR(255) NOT NULL,
-                    AvatarUrl NVARCHAR(500) NULL,
-                    AdminId INT NOT NULL,
-                    CreatedAt DATETIME DEFAULT GETDATE(),
-                    CONSTRAINT FK_Groups_Admin FOREIGN KEY (AdminId) REFERENCES Users(Id)
-                );
-            END
-        `);
-
-        // Create GroupMembers table
-        await pool.request().query(`
-            IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='GroupMembers' and xtype='U')
-            BEGIN
-                CREATE TABLE GroupMembers (
-                    GroupId INT NOT NULL,
-                    UserId INT NOT NULL,
-                    Role NVARCHAR(50) DEFAULT 'member',
-                    JoinedAt DATETIME DEFAULT GETDATE(),
-                    PRIMARY KEY (GroupId, UserId),
-                    CONSTRAINT FK_GroupMembers_Group FOREIGN KEY (GroupId) REFERENCES Groups(Id) ON DELETE CASCADE,
-                    CONSTRAINT FK_GroupMembers_User FOREIGN KEY (UserId) REFERENCES Users(Id)
-                );
-            END
+            IF EXISTS (SELECT * FROM sysobjects WHERE name='GroupMembers' and xtype='U')
+                DROP TABLE GroupMembers;
+            IF EXISTS (SELECT * FROM sysobjects WHERE name='Groups' and xtype='U')
+                DROP TABLE Groups;
+            IF EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[Messages]') AND name = 'GroupId')
+                ALTER TABLE Messages DROP COLUMN GroupId;
         `);
 
         // Create MessageReactions table
@@ -334,18 +319,57 @@ app.get('/api/auth/me', authenticateToken, async (req, res) => {
 // Update profile
 app.put('/api/users/profile', authenticateToken, async (req, res) => {
     try {
-        const { FullName, Bio } = req.body;
+        const { FullName, Bio, Username, Email, DateOfBirth, Password } = req.body;
         const pool = await poolPromise;
+
+        const userResult = await pool.request()
+            .input('Id', sql.Int, req.user.id)
+            .query('SELECT Username, Email, Password FROM Users WHERE Id = @Id');
+        
+        const currentUser = userResult.recordset[0];
+        
+        if ((Username && Username !== currentUser.Username) || (Email && Email !== currentUser.Email)) {
+            if (!Password) {
+                return res.status(400).json({ error: 'Password required to change Username or Email' });
+            }
+            const isMatch = await bcrypt.compare(Password, currentUser.Password);
+            if (!isMatch) {
+                return res.status(401).json({ error: 'Incorrect password' });
+            }
+            
+            const duplicateCheck = await pool.request()
+                .input('Username', sql.NVarChar, Username || currentUser.Username)
+                .input('Email', sql.NVarChar, Email || currentUser.Email)
+                .input('Id', sql.Int, req.user.id)
+                .query('SELECT Id FROM Users WHERE (Username = @Username OR Email = @Email) AND Id != @Id');
+                
+            if (duplicateCheck.recordset.length > 0) {
+                return res.status(409).json({ error: 'Username or Email already exists' });
+            }
+        }
+
         await pool.request()
             .input('FullName', sql.NVarChar, FullName)
             .input('Bio', sql.NVarChar, Bio)
+            .input('Username', sql.NVarChar, Username || currentUser.Username)
+            .input('Email', sql.NVarChar, Email || currentUser.Email)
+            .input('DateOfBirth', sql.Date, DateOfBirth || null)
             .input('Id', sql.Int, req.user.id)
             .query(`
                 UPDATE Users 
-                SET FullName = @FullName, Bio = @Bio
+                SET FullName = @FullName, 
+                    Bio = @Bio,
+                    Username = @Username,
+                    Email = @Email,
+                    DateOfBirth = @DateOfBirth
                 WHERE Id = @Id
             `);
-        res.json({ message: 'Profile updated successfully' });
+
+        const updatedResult = await pool.request()
+            .input('Id', sql.Int, req.user.id)
+            .query('SELECT Id, Username, FullName, Email, DateOfBirth, AvatarUrl, Bio FROM Users WHERE Id = @Id');
+
+        res.json({ message: 'Profile updated successfully', user: updatedResult.recordset[0] });
     } catch (err) {
         console.error('Error updating profile:', err);
         res.status(500).json({ error: 'Internal server error' });
@@ -388,6 +412,9 @@ app.post('/api/register', async (req, res) => {
         res.json({ user: userObj, token });
     } catch (err) {
         console.error(err);
+        if (err.number === 2627 || err.number === 2601) {
+            return res.status(400).json({ error: 'Email hoặc Username đã được sử dụng' });
+        }
         res.status(500).json({ error: 'Server error' });
     }
 });
@@ -443,8 +470,6 @@ app.post('/api/auth/facebook', async (req, res) => {
 // ==========================================
 // PASSWORD RECOVERY APIS
 // ==========================================
-const resetTokens = new Map(); // Simple in-memory store for tokens (Use DB in production)
-
 app.post('/api/auth/forgot-password', async (req, res) => {
     try {
         const { email } = req.body;
@@ -457,10 +482,37 @@ app.post('/api/auth/forgot-password', async (req, res) => {
             return res.status(404).json({ error: 'User not found' });
         }
         
+        const userId = result.recordset[0].Id;
         const otp = Math.floor(100000 + Math.random() * 900000).toString();
-        resetTokens.set(email, { otp, expires: Date.now() + 15 * 60 * 1000 });
-        
-        console.log(`[EMAIL SIMULATION] Password reset OTP for ${email} is: ${otp}`);
+        const expiry = new Date(Date.now() + 15 * 60 * 1000); // 15 mins
+
+        await pool.request()
+            .input('ResetToken', sql.NVarChar, otp)
+            .input('ResetTokenExpiry', sql.DateTime, expiry)
+            .input('Id', sql.Int, userId)
+            .query('UPDATE Users SET ResetToken = @ResetToken, ResetTokenExpiry = @ResetTokenExpiry WHERE Id = @Id');
+
+        // Setup Ethereal email (Mock SMTP for testing)
+        const testAccount = await nodemailer.createTestAccount();
+        const transporter = nodemailer.createTransport({
+            host: testAccount.smtp.host,
+            port: testAccount.smtp.port,
+            secure: testAccount.smtp.secure,
+            auth: {
+                user: testAccount.user,
+                pass: testAccount.pass,
+            },
+        });
+
+        const info = await transporter.sendMail({
+            from: '"VibeChat Admin" <admin@vibechat.com>',
+            to: email,
+            subject: 'Mã xác thực đổi mật khẩu VibeChat',
+            text: `Mã xác thực (OTP) của bạn là: ${otp}. Mã này sẽ hết hạn sau 15 phút.`,
+            html: `<b>Mã xác thực (OTP) của bạn là: ${otp}</b><br>Mã này sẽ hết hạn sau 15 phút.`,
+        });
+
+        console.log(`[EMAIL SIMULATION] Preview URL: ${nodemailer.getTestMessageUrl(info)}`);
         
         res.json({ success: true, message: 'OTP sent to email (simulated in console)' });
     } catch (err) {
@@ -472,20 +524,32 @@ app.post('/api/auth/forgot-password', async (req, res) => {
 app.post('/api/auth/reset-password', async (req, res) => {
     try {
         const { email, OTP, NewPassword } = req.body;
-        const tokenData = resetTokens.get(email);
         
-        if (!tokenData || tokenData.otp !== OTP || Date.now() > tokenData.expires) {
-            return res.status(400).json({ error: 'Invalid or expired OTP' });
+        const pool = await poolPromise;
+        const result = await pool.request()
+            .input('Email', sql.NVarChar, email)
+            .query('SELECT Id, ResetToken, ResetTokenExpiry FROM Users WHERE Email = @Email OR Username = @Email');
+            
+        if (result.recordset.length === 0) {
+            return res.status(400).json({ error: 'User not found' });
+        }
+        
+        const user = result.recordset[0];
+        
+        if (!user.ResetToken || user.ResetToken !== OTP) {
+            return res.status(400).json({ error: 'Mã xác thực không hợp lệ.' });
+        }
+        
+        if (new Date() > new Date(user.ResetTokenExpiry)) {
+            return res.status(400).json({ error: 'Mã xác thực đã hết hạn.' });
         }
         
         const hashedPassword = await bcrypt.hash(NewPassword, 10);
-        const pool = await poolPromise;
         await pool.request()
-            .input('Email', sql.NVarChar, email)
+            .input('Id', sql.Int, user.Id)
             .input('Password', sql.NVarChar, hashedPassword)
-            .query('UPDATE Users SET Password = @Password WHERE Email = @Email OR Username = @Email');
+            .query('UPDATE Users SET Password = @Password, ResetToken = NULL, ResetTokenExpiry = NULL WHERE Id = @Id');
             
-        resetTokens.delete(email);
         res.json({ success: true, message: 'Password reset successfully' });
     } catch (err) {
         console.error(err);
@@ -621,6 +685,12 @@ app.post('/api/friends/request', authenticateToken, async (req, res) => {
                     INSERT INTO Friendships (RequesterId, AddresseeId, Status) VALUES (@reqId, @addId, 'pending')
                 END
             `);
+            
+        const receiverSocketId = onlineUsers.get(addresseeId);
+        if (receiverSocketId) {
+            io.to(receiverSocketId).emit('friendshipUpdated');
+        }
+        
         res.json({ success: true });
     } catch (err) {
         console.error(err);
@@ -634,12 +704,46 @@ app.put('/api/friends/block', authenticateToken, async (req, res) => {
     const { userId, blockId } = req.body;
     try {
         const pool = await poolPromise;
-        // Update Friendship to 'blocked'
-        await pool.request()
+        const request = pool.request()
             .input('RequesterId', sql.Int, userId)
-            .input('AddresseeId', sql.Int, blockId)
-            .query("UPDATE Friendships SET Status = 'blocked' WHERE (RequesterId = @RequesterId AND AddresseeId = @AddresseeId) OR (RequesterId = @AddresseeId AND AddresseeId = @RequesterId)");
+            .input('AddresseeId', sql.Int, blockId);
+            
+        const check = await request.query("SELECT 1 FROM Friendships WHERE (RequesterId = @RequesterId AND AddresseeId = @AddresseeId) OR (RequesterId = @AddresseeId AND AddresseeId = @RequesterId)");
+        
+        if (check.recordset.length > 0) {
+            await request.query("UPDATE Friendships SET Status = 'blocked', RequesterId = @RequesterId, AddresseeId = @AddresseeId WHERE (RequesterId = @RequesterId AND AddresseeId = @AddresseeId) OR (RequesterId = @AddresseeId AND AddresseeId = @RequesterId)");
+        } else {
+            await request.query("INSERT INTO Friendships (RequesterId, AddresseeId, Status) VALUES (@RequesterId, @AddresseeId, 'blocked')");
+        }
+        
+        const receiverSocketId = onlineUsers.get(blockId);
+        if (receiverSocketId) {
+            io.to(receiverSocketId).emit('friendshipUpdated');
+        }
+        
         res.json({ message: 'User blocked successfully' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Remove Friend or Unblock
+app.delete('/api/friends/:friendId', authenticateToken, async (req, res) => {
+    const { friendId } = req.params;
+    const userId = req.user.id;
+    try {
+        const pool = await poolPromise;
+        await pool.request()
+            .input('UserId', sql.Int, userId)
+            .input('FriendId', sql.Int, friendId)
+            .query("DELETE FROM Friendships WHERE (RequesterId = @UserId AND AddresseeId = @FriendId) OR (RequesterId = @FriendId AND AddresseeId = @UserId)");
+            
+        const receiverSocketId = onlineUsers.get(parseInt(friendId));
+        if (receiverSocketId) {
+            io.to(receiverSocketId).emit('friendshipUpdated');
+        }
+        
+        res.json({ success: true, message: 'Friendship removed' });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -675,6 +779,12 @@ app.post('/api/friends/accept', authenticateToken, async (req, res) => {
                 SET Status = 'accepted' 
                 WHERE RequesterId = @reqId AND AddresseeId = @addId
             `);
+            
+        const receiverSocketId = onlineUsers.get(requesterId);
+        if (receiverSocketId) {
+            io.to(receiverSocketId).emit('friendshipUpdated');
+        }
+        
         res.json({ success: true });
     } catch (err) {
         console.error(err);
@@ -689,12 +799,52 @@ app.get('/api/friends/:userId', authenticateToken, async (req, res) => {
         const result = await pool.request()
             .input('userId', sql.Int, userId)
             .query(`
-                SELECT u.Id, u.Username, u.FullName, u.AvatarUrl, f.Status, f.RequesterId, f.AddresseeId 
+                SELECT u.Id, u.Username, u.FullName, u.AvatarUrl, f.Status, f.RequesterId, f.AddresseeId,
+                       CASE WHEN a.Id IS NOT NULL THEN 1 ELSE 0 END as IsArchived
                 FROM Friendships f
                 JOIN Users u ON (u.Id = f.RequesterId OR u.Id = f.AddresseeId) AND u.Id != @userId
+                LEFT JOIN ArchivedChats a ON a.UserId = @userId AND a.FriendId = u.Id
                 WHERE (f.RequesterId = @userId OR f.AddresseeId = @userId)
             `);
         res.json(result.recordset);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// ARCHIVE API
+app.post('/api/archive', authenticateToken, async (req, res) => {
+    const { friendId } = req.body;
+    const userId = req.user.id;
+    try {
+        const pool = await poolPromise;
+        await pool.request()
+            .input('userId', sql.Int, userId)
+            .input('friendId', sql.Int, friendId)
+            .query(`
+                IF NOT EXISTS (SELECT 1 FROM ArchivedChats WHERE UserId = @userId AND FriendId = @friendId)
+                BEGIN
+                    INSERT INTO ArchivedChats (UserId, FriendId) VALUES (@userId, @friendId)
+                END
+            `);
+        res.json({ message: 'Chat archived successfully' });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+app.delete('/api/archive/:friendId', authenticateToken, async (req, res) => {
+    const { friendId } = req.params;
+    const userId = req.user.id;
+    try {
+        const pool = await poolPromise;
+        await pool.request()
+            .input('userId', sql.Int, userId)
+            .input('friendId', sql.Int, friendId)
+            .query(`DELETE FROM ArchivedChats WHERE UserId = @userId AND FriendId = @friendId`);
+        res.json({ message: 'Chat unarchived successfully' });
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Server error' });
@@ -727,14 +877,8 @@ io.on('connection', (socket) => {
                 .input('imageUrl', sql.NVarChar, imageUrl || null)
                 .input('replyToMessageId', sql.Int, replyToMessageId || null);
                 
-            let query = '';
-            if (groupId) {
-                req.input('groupId', sql.Int, groupId);
-                query = 'INSERT INTO Messages (SenderId, GroupId, Content, ImageUrl, ReplyToMessageId) OUTPUT INSERTED.Id, INSERTED.CreatedAt VALUES (@senderId, @groupId, @content, @imageUrl, @replyToMessageId)';
-            } else {
-                req.input('receiverId', sql.Int, receiverId);
-                query = 'INSERT INTO Messages (SenderId, ReceiverId, Content, ImageUrl, ReplyToMessageId) OUTPUT INSERTED.Id, INSERTED.CreatedAt VALUES (@senderId, @receiverId, @content, @imageUrl, @replyToMessageId)';
-            }
+            req.input('receiverId', sql.Int, receiverId);
+            let query = 'INSERT INTO Messages (SenderId, ReceiverId, Content, ImageUrl, ReplyToMessageId) OUTPUT INSERTED.Id, INSERTED.CreatedAt VALUES (@senderId, @receiverId, @content, @imageUrl, @replyToMessageId)';
 
             const result = await req.query(query);
             
@@ -742,7 +886,7 @@ io.on('connection', (socket) => {
                 Id: result.recordset[0].Id,
                 SenderId: senderId,
                 ReceiverId: receiverId || null,
-                GroupId: groupId || null,
+
                 Content: content,
                 ImageUrl: imageUrl,
                 AttachmentUrl: null,
@@ -754,15 +898,11 @@ io.on('connection', (socket) => {
                 Username: username
             };
             
-            if (groupId) {
-                io.to(`group_${groupId}`).emit('receiveMessage', newMessage);
-            } else {
-                const receiverSocketId = onlineUsers.get(receiverId);
-                if (receiverSocketId) {
-                    io.to(receiverSocketId).emit('receiveMessage', newMessage);
-                }
-                socket.emit('receiveMessage', newMessage);
+            const receiverSocketId = onlineUsers.get(receiverId);
+            if (receiverSocketId) {
+                io.to(receiverSocketId).emit('receiveMessage', newMessage);
             }
+            socket.emit('receiveMessage', newMessage);
         } catch (err) {
             console.error('Error saving message:', err);
         }
@@ -778,14 +918,8 @@ io.on('connection', (socket) => {
                 .input('attachmentUrl', sql.NVarChar, attachmentUrl || null)
                 .input('replyToMessageId', sql.Int, replyToMessageId || null);
                 
-            let query = '';
-            if (groupId) {
-                req.input('groupId', sql.Int, groupId);
-                query = 'INSERT INTO Messages (SenderId, GroupId, Content, AttachmentUrl, ReplyToMessageId) OUTPUT INSERTED.Id, INSERTED.CreatedAt VALUES (@senderId, @groupId, @content, @attachmentUrl, @replyToMessageId)';
-            } else {
-                req.input('receiverId', sql.Int, receiverId);
-                query = 'INSERT INTO Messages (SenderId, ReceiverId, Content, AttachmentUrl, ReplyToMessageId) OUTPUT INSERTED.Id, INSERTED.CreatedAt VALUES (@senderId, @receiverId, @content, @attachmentUrl, @replyToMessageId)';
-            }
+            req.input('receiverId', sql.Int, receiverId);
+            let query = 'INSERT INTO Messages (SenderId, ReceiverId, Content, AttachmentUrl, ReplyToMessageId) OUTPUT INSERTED.Id, INSERTED.CreatedAt VALUES (@senderId, @receiverId, @content, @attachmentUrl, @replyToMessageId)';
 
             const result = await req.query(query);
             
@@ -793,7 +927,7 @@ io.on('connection', (socket) => {
                 Id: result.recordset[0].Id,
                 SenderId: senderId,
                 ReceiverId: receiverId || null,
-                GroupId: groupId || null,
+
                 Content: content,
                 ImageUrl: null,
                 AttachmentUrl: attachmentUrl,
@@ -805,44 +939,54 @@ io.on('connection', (socket) => {
                 Username: username
             };
             
-            if (groupId) {
-                io.to(`group_${groupId}`).emit('receiveMessage', newMessage);
-            } else {
-                const receiverSocketId = onlineUsers.get(receiverId);
-                if (receiverSocketId) {
-                    io.to(receiverSocketId).emit('receiveMessage', newMessage);
-                }
-                socket.emit('receiveMessage', newMessage);
+            const receiverSocketId = onlineUsers.get(receiverId);
+            if (receiverSocketId) {
+                io.to(receiverSocketId).emit('receiveMessage', newMessage);
             }
+            socket.emit('receiveMessage', newMessage);
         } catch (err) {
             console.error('Error saving file message:', err);
         }
     });
 
-    socket.on('joinGroup', (groupId) => {
-        socket.join(`group_${groupId}`);
-        console.log(`User ${socket.user?.Username} joined group ${groupId}`);
-    });
-    
-    socket.on('joinGroups', (groupIds) => {
-        if (Array.isArray(groupIds)) {
-            groupIds.forEach(groupId => {
-                socket.join(`group_${groupId}`);
-                console.log(`User ${socket.user?.Username} joined group ${groupId}`);
-            });
+    socket.on('markAsDelivered', async (data) => {
+        const { messageId, senderId } = data;
+        try {
+            const pool = await poolPromise;
+            await pool.request()
+                .input('id', sql.Int, messageId)
+                .query('UPDATE Messages SET IsDelivered = 1, DeliveredAt = GETDATE() WHERE Id = @id AND IsDelivered = 0');
+            
+            const senderSocketId = onlineUsers.get(senderId);
+            if (senderSocketId) {
+                io.to(senderSocketId).emit('messageStatusChanged', { messageId, status: 'delivered' });
+            }
+        } catch (err) {
+            console.error('Error marking as delivered', err);
         }
     });
-    
-    socket.on('leaveGroup', (groupId) => {
-        socket.leave(`group_${groupId}`);
-        console.log(`User ${socket.user?.Username} left group ${groupId}`);
+
+    socket.on('markAsRead', async (data) => {
+        const { senderId, receiverId } = data; // senderId = friend, receiverId = me (who read it)
+        try {
+            const pool = await poolPromise;
+            await pool.request()
+                .input('senderId', sql.Int, senderId)
+                .input('receiverId', sql.Int, receiverId)
+                .query('UPDATE Messages SET IsRead = 1, ReadAt = GETDATE() WHERE SenderId = @senderId AND ReceiverId = @receiverId AND IsRead = 0');
+            
+            const senderSocketId = onlineUsers.get(senderId);
+            if (senderSocketId) {
+                io.to(senderSocketId).emit('messagesRead', { byUserId: receiverId });
+            }
+        } catch (err) {
+            console.error('Error marking as read', err);
+        }
     });
-    
+
     socket.on('typing', (data) => {
-        const { senderId, receiverId, groupId, isTyping, username } = data;
-        if (groupId) {
-            socket.to(`group_${groupId}`).emit('typing', { senderId, groupId, isTyping, username });
-        } else if (receiverId) {
+        const { senderId, receiverId, isTyping, username } = data;
+        if (receiverId) {
             const receiverSocketId = onlineUsers.get(receiverId);
             if (receiverSocketId) {
                 io.to(receiverSocketId).emit('typing', { senderId, isTyping, username });
@@ -860,86 +1004,7 @@ io.on('connection', (socket) => {
 });
 
 
-// ==========================================
-// GROUP CHAT APIS
-// ==========================================
 
-// Create a new group
-app.post('/api/groups', authenticateToken, async (req, res) => {
-    try {
-        const { Name, AvatarUrl, MemberIds } = req.body;
-        if (!Name || !MemberIds || !Array.isArray(MemberIds)) {
-            return res.status(400).json({ error: 'Invalid group data' });
-        }
-
-        const pool = await poolPromise;
-        
-        // Use a transaction since we are inserting into two tables
-        const transaction = new sql.Transaction(pool);
-        await transaction.begin();
-
-        try {
-            // 1. Create Group
-            const request = new sql.Request(transaction);
-            request.input('Name', sql.NVarChar, Name);
-            request.input('AvatarUrl', sql.NVarChar, AvatarUrl || null);
-            request.input('AdminId', sql.Int, req.user.id);
-            
-            const groupResult = await request.query(`
-                INSERT INTO Groups (Name, AvatarUrl, AdminId)
-                OUTPUT INSERTED.Id, INSERTED.Name, INSERTED.AvatarUrl, INSERTED.AdminId, INSERTED.CreatedAt
-                VALUES (@Name, @AvatarUrl, @AdminId)
-            `);
-            
-            const newGroup = groupResult.recordset[0];
-            const groupId = newGroup.Id;
-
-            // 2. Add members to GroupMembers table
-            // The admin is automatically a member with 'admin' role
-            const allMembers = new Set([req.user.id, ...MemberIds]);
-            
-            for (const memberId of allMembers) {
-                const memberReq = new sql.Request(transaction);
-                memberReq.input('GroupId', sql.Int, groupId);
-                memberReq.input('UserId', sql.Int, memberId);
-                memberReq.input('Role', sql.NVarChar, memberId === req.user.id ? 'admin' : 'member');
-                
-                await memberReq.query(`
-                    INSERT INTO GroupMembers (GroupId, UserId, Role)
-                    VALUES (@GroupId, @UserId, @Role)
-                `);
-            }
-
-            await transaction.commit();
-            res.status(201).json(newGroup);
-        } catch (err) {
-            await transaction.rollback();
-            throw err;
-        }
-    } catch (err) {
-        console.error('Error creating group:', err);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-});
-
-// Get user's groups
-app.get('/api/groups', authenticateToken, async (req, res) => {
-    try {
-        const pool = await poolPromise;
-        const result = await pool.request()
-            .input('UserId', sql.Int, req.user.id)
-            .query(`
-                SELECT g.Id, g.Name, g.AvatarUrl, g.AdminId, g.CreatedAt, gm.Role, gm.JoinedAt
-                FROM Groups g
-                INNER JOIN GroupMembers gm ON g.Id = gm.GroupId
-                WHERE gm.UserId = @UserId
-            `);
-        res.json(result.recordset);
-    } catch (err) {
-        console.error('Error fetching groups:', err);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-});
 
 
 // ==========================================
@@ -1067,7 +1132,7 @@ app.get('/api/link-preview', authenticateToken, async (req, res) => {
 // RESTORED MISSING ROUTES
 // ==========================================
 app.get('/api/messages', authenticateToken, async (req, res) => {
-    const { user1, user2, groupId, limit, beforeId } = req.query;
+    const { user1, user2, limit, beforeId } = req.query;
     const fetchLimit = limit ? parseInt(limit) : 20;
     try {
         const pool = await poolPromise;
@@ -1075,8 +1140,8 @@ app.get('/api/messages', authenticateToken, async (req, res) => {
         request.input('limit', sql.Int, fetchLimit);
         let query = `
             SELECT TOP (@limit) m.Id, m.Content, m.ImageUrl, m.AttachmentUrl, m.CreatedAt, 
-                   u.Username, u.FullName, u.AvatarUrl, m.SenderId, m.ReceiverId, m.GroupId,
-                   m.ReplyToMessageId, m.IsPinned, m.IsEdited,
+                   u.Username, u.FullName, u.AvatarUrl, m.SenderId, m.ReceiverId,
+                   m.ReplyToMessageId, m.IsPinned, m.IsEdited, m.IsDelivered, m.IsRead,
                    (
                        SELECT r.ReactionType as Reaction, r.UserId, u2.FullName as Username
                        FROM MessageReactions r
@@ -1089,12 +1154,9 @@ app.get('/api/messages', authenticateToken, async (req, res) => {
             WHERE 1=1
         `;
         
-        if (groupId) {
-            query += ` AND m.GroupId = @groupId `;
-            request.input('groupId', sql.Int, groupId);
-        } else if (user1 && user2) {
-            query += ` AND ((m.SenderId = @user1 AND m.ReceiverId = @user2 AND m.GroupId IS NULL) 
-                          OR (m.SenderId = @user2 AND m.ReceiverId = @user1 AND m.GroupId IS NULL)) `;
+        if (user1 && user2) {
+            query += ` AND ((m.SenderId = @user1 AND m.ReceiverId = @user2) 
+                          OR (m.SenderId = @user2 AND m.ReceiverId = @user1)) `;
             request.input('user1', sql.Int, user1);
             request.input('user2', sql.Int, user2);
         }
