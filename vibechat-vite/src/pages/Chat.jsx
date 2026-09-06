@@ -7,7 +7,7 @@ import {
     Settings, Search, Shield, Accessibility, HelpCircle, AlertTriangle,
     Home, Video, Menu, CheckCheck, Check, Phone, MonitorUp, Paperclip, Folder, Smile, Plus, Bold, Code, List, Camera, Mic, Sticker, ChevronDown, Edit2,
     BellOff, Ban, Trash2, ChevronRight, FileText, Link, Image as ImageIcon,
-    Bell, Moon, Circle, X, UserCheck, Archive, MoreHorizontal, Info
+    Bell, Moon, Circle, X, UserCheck, Archive, MoreHorizontal, Info, Reply, MoreVertical
 } from 'lucide-react';
 import EmojiPicker from 'emoji-picker-react';
 import Peer from 'peerjs';
@@ -45,6 +45,8 @@ const Chat = ({ user, setUser }) => {
 
     const [replyingTo, setReplyingTo] = useState(null);
     const [hoveredMessageId, setHoveredMessageId] = useState(null);
+    const [activeDropdownId, setActiveDropdownId] = useState(null);
+    const [activeReactionBarId, setActiveReactionBarId] = useState(null);
     const [hasMore, setHasMore] = useState(true);
     const [isLoadingMore, setIsLoadingMore] = useState(false);
     const messagesAreaRef = useRef(null);
@@ -81,6 +83,7 @@ const Chat = ({ user, setUser }) => {
     const [myStream, setMyStream] = useState(null);
     const [remoteStream, setRemoteStream] = useState(null);
     const [callActive, setCallActive] = useState(false);
+    const [callIsVideo, setCallIsVideo] = useState(true);
     
     // Change password state
     const [oldPassword, setOldPassword] = useState('');
@@ -93,6 +96,10 @@ const Chat = ({ user, setUser }) => {
     const [showSettingsModal, setShowSettingsModal] = useState(false);
     const [showPolicyModal, setShowPolicyModal] = useState(false);
     const [showBlockedModal, setShowBlockedModal] = useState(false);
+    const [showFriendProfileModal, setShowFriendProfileModal] = useState(false);
+    const [showSearchMessages, setShowSearchMessages] = useState(false);
+    const [showNicknameModal, setShowNicknameModal] = useState(false);
+    const [nickname, setNickname] = useState('');
     const [showAccountDetails, setShowAccountDetails] = useState(false);
     const [policyType, setPolicyType] = useState('');
     const profileMenuRef = useRef(null);
@@ -102,6 +109,9 @@ const Chat = ({ user, setUser }) => {
     const myVideoRef = useRef(null);
     const remoteVideoRef = useRef(null);
     const currentCallRef = useRef(null);
+    const callStartTimeRef = useRef(null);
+    const isCallerRef = useRef(false);
+    const callTimeoutRef = useRef(null);
     const navigate = useNavigate();
 
     useEffect(() => {
@@ -131,7 +141,7 @@ const Chat = ({ user, setUser }) => {
     const fetchFriends = useCallback(async () => {
         if (!user) return;
         try {
-            const response = await axios.get(`http://${window.location.hostname}:5000/api/friends/${user.Id}`);
+            const response = await axios.get(`/api/friends/${user.Id}`);
             setFriendsList(response.data);
         } catch (err) {
             console.error("Failed to fetch friends", err);
@@ -141,7 +151,7 @@ const Chat = ({ user, setUser }) => {
     const fetchTasks = useCallback(async () => {
         if (!user) return;
         try {
-            const response = await axios.get(`http://${window.location.hostname}:5000/api/tasks`);
+            const response = await axios.get(`/api/tasks`);
             setTasks(response.data);
         } catch (err) {
             console.error("Failed to fetch tasks", err);
@@ -170,7 +180,7 @@ const Chat = ({ user, setUser }) => {
         if (activeTab === 'people') {
             const delayDebounceFn = setTimeout(async () => {
                 try {
-                    const response = await axios.get(`http://${window.location.hostname}:5000/api/users/search?q=${searchQuery.trim()}&currentUserId=${user.Id}`);
+                    const response = await axios.get(`/api/users/search?q=${searchQuery.trim()}&currentUserId=${user.Id}`);
                     setSearchResults(response.data);
                 } catch (err) {
                     console.error(err);
@@ -183,7 +193,7 @@ const Chat = ({ user, setUser }) => {
     // Friend actions
     const sendFriendRequest = async (addresseeId) => {
         try {
-            await axios.post(`http://${window.location.hostname}:5000/api/friends/request`, {
+            await axios.post(`/api/friends/request`, {
                 requesterId: user.Id,
                 addresseeId
             });
@@ -196,7 +206,7 @@ const Chat = ({ user, setUser }) => {
 
     const acceptFriendRequest = async (requesterId) => {
         try {
-            await axios.post(`http://${window.location.hostname}:5000/api/friends/accept`, {
+            await axios.post(`/api/friends/accept`, {
                 requesterId,
                 addresseeId: user.Id
             });
@@ -209,7 +219,7 @@ const Chat = ({ user, setUser }) => {
 
     const unfriendUser = async (friendId) => {
         try {
-            await axios.delete(`http://${window.location.hostname}:5000/api/friends/${friendId}`);
+            await axios.delete(`/api/friends/${friendId}`);
             fetchFriends();
             setSearchResults(prev => prev.map(u => u.Id === friendId ? { ...u, Status: null } : u));
             if (selectedFriend && selectedFriend.Id === friendId) {
@@ -222,7 +232,7 @@ const Chat = ({ user, setUser }) => {
     
     const blockUser = async (blockId) => {
         try {
-            await axios.put(`http://${window.location.hostname}:5000/api/friends/block`, { userId: user.Id, blockId });
+            await axios.put(`/api/friends/block`, { userId: user.Id, blockId });
             fetchFriends();
             setSearchResults(prev => prev.map(u => u.Id === blockId ? { ...u, Status: 'blocked' } : u));
             if (selectedFriend && selectedFriend.Id === blockId) {
@@ -235,7 +245,7 @@ const Chat = ({ user, setUser }) => {
     
     const unblockUser = async (blockId) => {
         try {
-            await axios.delete(`http://${window.location.hostname}:5000/api/friends/${blockId}`);
+            await axios.delete(`/api/friends/${blockId}`);
             fetchFriends();
             setSearchResults(prev => prev.map(u => u.Id === blockId ? { ...u, Status: null } : u));
         } catch (err) {
@@ -249,7 +259,7 @@ const Chat = ({ user, setUser }) => {
         setHasMore(true);
         const fetchMessages = async () => {
             try {
-                let url = `http://${window.location.hostname}:5000/api/messages?limit=20&user1=${user.Id}&user2=${selectedFriend.Id}`;
+                let url = `/api/messages?limit=20&user1=${user.Id}&user2=${selectedFriend.Id}`;
                 const response = await axios.get(url, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
                 setMessages(response.data);
                 if (response.data.length < 20) setHasMore(false);
@@ -271,7 +281,7 @@ const Chat = ({ user, setUser }) => {
             const previousScrollHeight = messagesAreaRef.current.scrollHeight;
             
             try {
-                let url = `http://${window.location.hostname}:5000/api/messages?limit=20&beforeId=${oldestMessageId}&user1=${user.Id}&user2=${selectedFriend.Id}`;
+                let url = `/api/messages?limit=20&beforeId=${oldestMessageId}&user1=${user.Id}&user2=${selectedFriend.Id}`;
                 const response = await axios.get(url, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
                 
                 if (response.data.length < 20) {
@@ -318,6 +328,15 @@ const Chat = ({ user, setUser }) => {
 
     // Socket
     useEffect(() => {
+        const handleMessageDeleted = ({ messageId, type }) => {
+            setMessages(prev => prev.map(msg => {
+                if (msg.Id == messageId && type === 'everyone') {
+                    return { ...msg, IsDeleted: true };
+                }
+                return msg;
+            }));
+        };
+
         const handleReceiveMessage = (message) => {
             if (message.SenderId != user.Id) {
                 socket.emit('markAsDelivered', { messageId: message.Id, senderId: message.SenderId });
@@ -390,6 +409,7 @@ const Chat = ({ user, setUser }) => {
         socket.on('userOnline', handleUserOnline);
         socket.on('userOffline', handleUserOffline);
         socket.on('typing', handleTyping);
+        socket.on('messageDeleted', handleMessageDeleted);
         socket.on('friendRequestReceived', fetchFriends);
         socket.on('friendRequestAccepted', fetchFriends);
         socket.on('friendshipUpdated', fetchFriends);
@@ -413,14 +433,52 @@ const Chat = ({ user, setUser }) => {
         };
     }, [selectedFriend, user]);
 
-    // PeerJS Init
+    useEffect(() => {
+        const handleCallRejected = () => {
+            if (isCallerRef.current && selectedFriend) {
+                const msgData = {
+                    senderId: user.Id,
+                    receiverId: selectedFriend.Id,
+                    content: `📞 Cuộc gọi bị từ chối`,
+                    username: user.Username,
+                };
+                socket.emit('sendMessage', msgData);
+            }
+            endCall();
+        };
+        
+        const handleCallEnded = () => {
+            endCall(false); // Do not emit event back
+        };
+
+        socket.on('callRejected', handleCallRejected);
+        socket.on('callEnded', handleCallEnded);
+        
+        return () => {
+            socket.off('callRejected', handleCallRejected);
+            socket.off('callEnded', handleCallEnded);
+        };
+    }, [myStream, selectedFriend, user]); // myStream changes when call starts, so endCall gets fresh closure
+    
     useEffect(() => {
         if (!user) return;
+        console.log("Initializing PeerJS with host:", window.location.hostname, "port:", window.location.port);
         const newPeer = new Peer(user.Id.toString(), {
             host: window.location.hostname,
-            port: 5001,
-            path: '/peerjs/myapp'
+            port: parseInt(window.location.port || (window.location.protocol === 'https:' ? 443 : 80)),
+            path: '/peerjs/myapp',
+            secure: window.location.protocol === 'https:',
+            debug: 3
         });
+        
+        newPeer.on('open', (id) => {
+            console.log('PeerJS connected with ID:', id);
+        });
+
+        newPeer.on('error', (err) => {
+            console.error('PeerJS connection error:', err);
+        });
+
         setPeer(newPeer);
         
         newPeer.on('call', (call) => {
@@ -440,15 +498,47 @@ const Chat = ({ user, setUser }) => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }, [messages]);
 
+    useEffect(() => {
+        if (myVideoRef.current && myStream) {
+            myVideoRef.current.srcObject = myStream;
+        }
+    }, [myStream, callActive]);
+
+    useEffect(() => {
+        if (remoteVideoRef.current && remoteStream) {
+            remoteVideoRef.current.srcObject = remoteStream;
+        }
+    }, [remoteStream, callActive]);
+
     
+    const handleDeleteMessage = async (msgId, type) => {
+        try {
+            await axios.delete(`/api/messages/${msgId}?type=${type}`, {
+                headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+            });
+            
+            // local update
+            setMessages(prev => prev.map(msg => {
+                if (msg.Id == msgId) {
+                    if (type === 'everyone') return { ...msg, IsDeleted: true };
+                }
+                return msg;
+            }).filter(msg => !(msg.Id == msgId && type === 'me')));
+            
+        } catch (err) {
+            console.error('Error deleting message:', err);
+            alert('Lỗi: ' + (err.response?.data?.error || err.message));
+        }
+    };
+
     const handleReact = async (msgId, type) => {
         try {
-            await axios.post(`http://${window.location.hostname}:5000/api/messages/${msgId}/react`, { reactionType: type }, {
+            await axios.post(`/api/messages/${msgId}/react`, { reactionType: type }, {
                 headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
             });
             
             // Fetch updated messages
-            let url = `http://${window.location.hostname}:5000/api/messages?user1=${user.Id}&user2=${selectedFriend.Id}`;
+            let url = `/api/messages?user1=${user.Id}&user2=${selectedFriend.Id}`;
             const response = await axios.get(url, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
             setMessages(response.data);
         } catch (err) { console.error('Error reacting', err); }
@@ -456,7 +546,7 @@ const Chat = ({ user, setUser }) => {
     
     const handlePin = async (msgId, isPinned) => {
         try {
-            await axios.put(`http://${window.location.hostname}:5000/api/messages/${msgId}/pin`, { isPinned: !isPinned }, {
+            await axios.put(`/api/messages/${msgId}/pin`, { isPinned: !isPinned }, {
                 headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
             });
             fetchMessages();
@@ -495,7 +585,7 @@ const Chat = ({ user, setUser }) => {
         formData.append('avatar', file);
 
         try {
-            const response = await axios.post(`http://${window.location.hostname}:5000/api/users/avatar`, formData, {
+            const response = await axios.post(`/api/users/avatar`, formData, {
                 headers: { 
                     'Authorization': `Bearer ${localStorage.getItem('token')}`,
                     'Content-Type': 'multipart/form-data'
@@ -512,7 +602,7 @@ const Chat = ({ user, setUser }) => {
     const handleSaveProfile = async () => {
         setEditProfileError('');
         try {
-            const response = await axios.put(`http://${window.location.hostname}:5000/api/users/profile`, editProfileData, {
+            const response = await axios.put(`/api/users/profile`, editProfileData, {
                 headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
             });
             const updatedUser = response.data.user || { ...user, ...editProfileData };
@@ -550,7 +640,7 @@ const handleMessageChange = (e) => {
         formData.append('image', file);
 
         try {
-            const response = await axios.post(`http://${window.location.hostname}:5000/api/messages/image`, formData, {
+            const response = await axios.post(`/api/messages/image`, formData, {
                 headers: { 'Content-Type': 'multipart/form-data', 'Authorization': `Bearer ${localStorage.getItem('token')}` }
             });
             
@@ -576,7 +666,7 @@ const handleMessageChange = (e) => {
         formData.append('file', file);
 
         try {
-            const response = await axios.post(`http://${window.location.hostname}:5000/api/messages/file`, formData, {
+            const response = await axios.post(`/api/messages/file`, formData, {
                 headers: { 'Content-Type': 'multipart/form-data', 'Authorization': `Bearer ${localStorage.getItem('token')}` }
             });
             
@@ -615,7 +705,7 @@ const handleMessageChange = (e) => {
                     formData.append('file', audioBlob, 'voice.webm');
 
                     try {
-                        const res = await axios.post(`http://${window.location.hostname}:5000/api/messages/file`, formData, {
+                        const res = await axios.post(`/api/messages/file`, formData, {
                             headers: { 'Content-Type': 'multipart/form-data', 'Authorization': `Bearer ${localStorage.getItem('token')}` }
                         });
                         socket.emit('sendFileMessage', {
@@ -657,8 +747,10 @@ const handleMessageChange = (e) => {
             const stream = await navigator.mediaDevices.getUserMedia({ video: isVideo, audio: true });
             setMyStream(stream);
             setCallActive(true);
+            setCallIsVideo(isVideo);
             
             if (peer && selectedFriend) {
+                isCallerRef.current = true;
                 const call = peer.call(selectedFriend.Id.toString(), stream, {
                     metadata: { callerName: user.Username, isVideo }
                 });
@@ -671,8 +763,26 @@ const handleMessageChange = (e) => {
                 
                 currentCallRef.current = call;
                 
+                callTimeoutRef.current = setTimeout(() => {
+                    if (selectedFriend) {
+                        const msgData = {
+                            senderId: user.Id,
+                            receiverId: selectedFriend.Id,
+                            content: `📞 Cuộc gọi nhỡ`,
+                            username: user.Username,
+                        };
+                        socket.emit('sendMessage', msgData);
+                    }
+                    endCall();
+                }, 60000);
+                
                 call.on('stream', (userVideoStream) => {
+                    if (callTimeoutRef.current) {
+                        clearTimeout(callTimeoutRef.current);
+                        callTimeoutRef.current = null;
+                    }
                     setRemoteStream(userVideoStream);
+                    if (!callStartTimeRef.current) callStartTimeRef.current = Date.now();
                 });
                 
                 call.on('close', () => {
@@ -691,14 +801,21 @@ const handleMessageChange = (e) => {
             const stream = await navigator.mediaDevices.getUserMedia({ video: incomingCall.isVideo, audio: true });
             setMyStream(stream);
             setCallActive(true);
+            setCallIsVideo(incomingCall.isVideo);
             
             const call = incomingCall.call;
             currentCallRef.current = call;
+            isCallerRef.current = false;
             
             call.answer(stream);
             
             call.on('stream', (userVideoStream) => {
+                if (callTimeoutRef.current) {
+                    clearTimeout(callTimeoutRef.current);
+                    callTimeoutRef.current = null;
+                }
                 setRemoteStream(userVideoStream);
+                if (!callStartTimeRef.current) callStartTimeRef.current = Date.now();
             });
             
             call.on('close', () => {
@@ -712,7 +829,46 @@ const handleMessageChange = (e) => {
         }
     };
 
-    const endCall = () => {
+    const endCall = (emitEvent = true) => {
+        if (callTimeoutRef.current) {
+            clearTimeout(callTimeoutRef.current);
+            callTimeoutRef.current = null;
+        }
+        
+        if (isCallerRef.current && selectedFriend) {
+            if (callStartTimeRef.current) {
+                const durationMs = Date.now() - callStartTimeRef.current;
+                const durationSec = Math.floor(durationMs / 1000);
+                const minutes = Math.floor(durationSec / 60);
+                const seconds = durationSec % 60;
+                const durationStr = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+                
+                const msgData = {
+                    senderId: user.Id,
+                    receiverId: selectedFriend.Id,
+                    content: `📞 Cuộc gọi - Thời lượng: ${durationStr}`,
+                    username: user.Username,
+                };
+                socket.emit('sendMessage', msgData);
+            } else {
+                const msgData = {
+                    senderId: user.Id,
+                    receiverId: selectedFriend.Id,
+                    content: `📞 Cuộc gọi nhỡ`,
+                    username: user.Username,
+                };
+                socket.emit('sendMessage', msgData);
+            }
+        }
+        
+        // Notify the other peer explicitly over socket to prevent frozen call states
+        if (emitEvent !== false && selectedFriend) {
+            socket.emit('endCall', { receiverId: selectedFriend.Id });
+        }
+        
+        callStartTimeRef.current = null;
+        isCallerRef.current = false;
+        
         if (currentCallRef.current) {
             currentCallRef.current.close();
             currentCallRef.current = null;
@@ -736,15 +892,39 @@ const handleMessageChange = (e) => {
         localStorage.setItem('mutedUsers', JSON.stringify(newMuted));
     };
 
+    const handleSetNickname = async () => {
+        try {
+            const res = await fetch(`/api/friends/nickname`, {
+                method: 'POST',
+                headers: { 
+                    'Authorization': `Bearer ${localStorage.getItem('token')}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ friendId: selectedFriend.Id, nickname })
+            });
+            if (res.ok) {
+                const updatedFriend = { ...selectedFriend, Nickname: nickname };
+                setSelectedFriend(updatedFriend);
+                setFriendsList(prev => prev.map(f => f.Id === selectedFriend.Id ? updatedFriend : f));
+                setShowNicknameModal(false);
+            } else {
+                alert('Có lỗi xảy ra khi lưu biệt danh');
+            }
+        } catch (error) {
+            console.error('Error setting nickname:', error);
+            alert('Có lỗi xảy ra khi lưu biệt danh');
+        }
+    };
+
     const handleArchiveChat = async () => {
         try {
             if (selectedFriend.IsArchived) {
-                await fetch(`http://${window.location.hostname}:5000/api/archive/${selectedFriend.Id}`, {
+                await fetch(`/api/archive/${selectedFriend.Id}`, {
                     method: 'DELETE',
                     headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
                 });
             } else {
-                await fetch(`http://${window.location.hostname}:5000/api/archive`, {
+                await fetch(`/api/archive`, {
                     method: 'POST',
                     headers: { 
                         'Content-Type': 'application/json',
@@ -768,7 +948,7 @@ const handleMessageChange = (e) => {
             onConfirm: async () => {
                 setConfirmDialog({ isOpen: false, title: '', message: '', onConfirm: null });
         try {
-            await axios.put(`http://${window.location.hostname}:5000/api/friends/block`, { userId: user.Id, blockId: selectedFriend.Id }, {
+            await axios.put(`/api/friends/block`, { userId: user.Id, blockId: selectedFriend.Id }, {
                 headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
             });
             setSelectedFriend(null);
@@ -787,7 +967,7 @@ const handleMessageChange = (e) => {
             onConfirm: async () => {
                 setConfirmDialog({ isOpen: false, title: '', message: '', onConfirm: null });
         try {
-            await axios.delete(`http://${window.location.hostname}:5000/api/messages/chat/${selectedFriend.Id}`, {
+            await axios.delete(`/api/messages/chat/${selectedFriend.Id}`, {
                 headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
             });
             setMessages([]);
@@ -844,13 +1024,13 @@ const handleMessageChange = (e) => {
                                 >
                                     <div style={{position: 'relative'}}>
                                         <div className="chat-avatar" style={{background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', overflow: 'hidden'}}>
-                                            {friend.AvatarUrl ? <img src={`http://${window.location.hostname}:5000${friend.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : <UserIcon size={24} />}
+                                            {friend.AvatarUrl ? <img src={`${friend.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : <UserIcon size={24} />}
                                         </div>
                                         <div className="chat-status-dot" style={{ backgroundColor: onlineUsers.has(friend.Id) ? '#22c55e' : '#6b7280' }}></div>
                                     </div>
                                     <div className="chat-item-info">
                                         <div className="chat-item-top">
-                                            <span className="chat-item-name">{friend.FullName || friend.Username}</span>
+                                            <span className="chat-item-name">{friend.Nickname || friend.FullName || friend.Username}</span>
                                         </div>
                                     </div>
                                     {unreadCounts[friend.Id] > 0 && (
@@ -886,12 +1066,12 @@ const handleMessageChange = (e) => {
                                 >
                                     <div style={{position: 'relative'}}>
                                         <div className="chat-avatar" style={{background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', overflow: 'hidden'}}>
-                                            {friend.AvatarUrl ? <img src={`http://${window.location.hostname}:5000${friend.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : <UserIcon size={24} />}
+                                            {friend.AvatarUrl ? <img src={`${friend.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : <UserIcon size={24} />}
                                         </div>
                                     </div>
                                     <div className="chat-item-info">
                                         <div className="chat-item-top">
-                                            <span className="chat-item-name">{friend.FullName || friend.Username}</span>
+                                            <span className="chat-item-name">{friend.Nickname || friend.FullName || friend.Username}</span>
                                         </div>
                                     </div>
                                     {unreadCounts[friend.Id] > 0 && (
@@ -952,10 +1132,10 @@ const handleMessageChange = (e) => {
                                         {pendingRequests.map(req => (
                                             <div key={req.Id} className="chat-item">
                                                 <div className="chat-avatar" style={{background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', overflow: 'hidden'}}>
-                                                    {req.AvatarUrl ? <img src={`http://${window.location.hostname}:5000${req.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : <UserIcon size={24} />}
+                                                    {req.AvatarUrl ? <img src={`${req.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : <UserIcon size={24} />}
                                                 </div>
                                                 <div className="chat-item-info">
-                                                    <span className="chat-item-name">{req.FullName || req.Username}</span>
+                                                    <span className="chat-item-name">{req.Nickname || req.FullName || req.Username}</span>
                                                 </div>
                                                 <button onClick={() => acceptFriendRequest(req.RequesterId)} style={{background: 'var(--primary-color)', color: 'white', border: 'none', borderRadius: '8px', padding: '6px 12px', cursor: 'pointer'}}>
                                                     Chấp nhận
@@ -973,10 +1153,10 @@ const handleMessageChange = (e) => {
                                         activeFriends.map(friend => (
                                             <div key={friend.Id} className="chat-item">
                                                 <div className="chat-avatar" style={{background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', overflow: 'hidden'}}>
-                                                    {friend.AvatarUrl ? <img src={`http://${window.location.hostname}:5000${friend.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : <UserIcon size={24} />}
+                                                    {friend.AvatarUrl ? <img src={`${friend.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : <UserIcon size={24} />}
                                                 </div>
                                                 <div className="chat-item-info">
-                                                    <span className="chat-item-name">{friend.FullName || friend.Username}</span>
+                                                    <span className="chat-item-name">{friend.Nickname || friend.FullName || friend.Username}</span>
                                                 </div>
                                                 <div style={{display: 'flex', gap: '8px'}}>
                                                     <button onClick={() => unfriendUser(friend.Id)} style={{background: 'rgba(255,100,100,0.1)', border: '1px solid rgba(255,100,100,0.3)', borderRadius: '8px', padding: '6px 12px', cursor: 'pointer', color: '#ff6b6b', fontSize: '13px'}}>
@@ -1009,7 +1189,7 @@ const handleMessageChange = (e) => {
                                     suggestions.map(su => (
                                         <div key={su.Id} className="chat-item">
                                             <div className="chat-avatar" style={{background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', overflow: 'hidden'}}>
-                                                {su.AvatarUrl ? <img src={`http://${window.location.hostname}:5000${su.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : <UserIcon size={24} />}
+                                                {su.AvatarUrl ? <img src={`${su.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : <UserIcon size={24} />}
                                             </div>
                                             <div className="chat-item-info">
                                                 <span className="chat-item-name">{su.FullName || su.Username}</span>
@@ -1045,7 +1225,7 @@ const handleMessageChange = (e) => {
                     <div className="profile-container" style={{padding: '20px 0'}}>
                         <div className="profile-avatar-wrapper" style={{marginBottom: '16px'}}>
                             {user.AvatarUrl ? (
-                                <img src={`http://${window.location.hostname}:5000${user.AvatarUrl}`} alt="Avatar" className="profile-avatar" />
+                                <img src={`${user.AvatarUrl}`} alt="Avatar" className="profile-avatar" />
                             ) : (
                                 <div className="profile-avatar-placeholder">
                                     <UserIcon size={64} />
@@ -1106,7 +1286,7 @@ const handleMessageChange = (e) => {
                     <div className="nav-bottom">
                         <div className="nav-item" style={{display: 'flex', alignItems: 'center', gap: '12px', position: 'relative', width: '100%', padding: '8px'}} ref={profileMenuRef} onClick={() => setShowProfileMenu(!showProfileMenu)}>
                             <div style={{width: '36px', height: '36px', borderRadius: '50%', background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', overflow: 'hidden', flexShrink: 0}}>
-                                {user.AvatarUrl ? <img src={`http://${window.location.hostname}:5000${user.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : <UserIcon size={20} />}
+                                {user.AvatarUrl ? <img src={`${user.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : <UserIcon size={20} />}
                             </div>
                             <span style={{flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontWeight: '600', color: 'var(--text-primary)', fontSize: '15px'}}>{user.FullName || user.Username}</span>
                             <Settings size={20} style={{color: 'var(--text-secondary)'}} />
@@ -1178,10 +1358,10 @@ const handleMessageChange = (e) => {
                                         <ArrowLeft size={20} />
                                     </button>
                                     <div className="chat-avatar" style={{background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', overflow: 'hidden'}}>
-                                        {selectedFriend.AvatarUrl ? <img src={`http://${window.location.hostname}:5000${selectedFriend.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : <UserIcon size={24} />}
+                                        {selectedFriend.AvatarUrl ? <img src={`${selectedFriend.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : <UserIcon size={24} />}
                                     </div>
                                     <div className="header-user-text">
-                                        <h3>{selectedFriend.FullName || selectedFriend.Username}</h3>
+                                        <h3>{selectedFriend.Nickname || selectedFriend.FullName || selectedFriend.Username}</h3>
                                         <div className="header-user-status">
                                             <div className="chat-status-dot" style={{ backgroundColor: onlineUsers.has(selectedFriend.Id) ? '#22c55e' : '#6b7280', position: 'relative', border: 'none', width: '10px', height: '10px', marginRight: '6px' }}></div> 
                                             {onlineUsers.has(selectedFriend.Id) ? getText('online') : getText('offline')} 
@@ -1195,6 +1375,23 @@ const handleMessageChange = (e) => {
                                     <Info size={24} style={{cursor: 'pointer', color: 'var(--primary-color)'}} title="Thông tin" />
                                 </div>
                             </header>
+
+                            {showSearchMessages && (
+                                <div style={{padding: '12px 24px', borderBottom: '1px solid var(--glass-border)', background: 'var(--bg-secondary)', display: 'flex', alignItems: 'center', gap: '12px'}}>
+                                    <Search size={18} color="var(--text-secondary)" />
+                                    <input 
+                                        type="text" 
+                                        placeholder="Tìm kiếm tin nhắn..." 
+                                        value={searchMessageTerm}
+                                        onChange={e => setSearchMessageTerm(e.target.value)}
+                                        style={{flex: 1, background: 'transparent', border: 'none', color: 'var(--text-primary)', outline: 'none', fontSize: '14px'}}
+                                        autoFocus
+                                    />
+                                    <button onClick={() => { setShowSearchMessages(false); setSearchMessageTerm(''); }} style={{background: 'transparent', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+                                        <X size={18} />
+                                    </button>
+                                </div>
+                            )}
 
                             <div className="messages-area" ref={messagesAreaRef} onScroll={handleScroll}>
                                 {isLoadingMore && (
@@ -1214,16 +1411,16 @@ const handleMessageChange = (e) => {
                                                 <div className="message-meta" style={{flexDirection: isMine ? 'row-reverse' : 'row'}}>
                                                     <div className="chat-avatar" style={{width: '24px', height: '24px', background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', margin: 0, overflow: 'hidden'}}>
                                                         {isMine && user.AvatarUrl ? (
-                                                            <img src={`http://${window.location.hostname}:5000${user.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/>
+                                                            <img src={`${user.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/>
                                                         ) : (!isMine && msg.AvatarUrl) ? (
-                                                            <img src={`http://${window.location.hostname}:5000${msg.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/>
+                                                            <img src={`${msg.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/>
                                                         ) : (!isMine && selectedFriend && selectedFriend.AvatarUrl) ? (
-                                                            <img src={`http://${window.location.hostname}:5000${selectedFriend.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/>
+                                                            <img src={`${selectedFriend.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/>
                                                         ) : (
                                                             <UserIcon size={12} />
                                                         )}
                                                     </div>
-                                                    <span>{isMine ? getText('you') : (msg.FullName || msg.Username || selectedFriend.FullName || selectedFriend.Username)}</span>
+                                                    <span>{isMine ? getText('you') : (msg.FullName || msg.Username || selectedFriend.Nickname || selectedFriend.FullName || selectedFriend.Username)}</span>
                                                     <span style={{fontSize: '11px'}}>{new Date(msg.CreatedAt || Date.now()).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
                                                 </div>
                                                 <div className="message-content-wrapper" style={{display: 'flex', flexDirection: 'column', alignItems: isMine ? 'flex-end' : 'flex-start'}}>
@@ -1232,15 +1429,19 @@ const handleMessageChange = (e) => {
                                                         if (repliedMsg) {
                                                             return (
                                                                 <div style={{fontSize: '12px', color: 'var(--text-secondary)', background: 'var(--bg-secondary)', padding: '4px 8px', borderRadius: '4px', marginBottom: '4px', maxWidth: '100%', opacity: 0.8, borderLeft: `3px solid var(--primary-color)`}}>
-                                                                    <strong>{repliedMsg.Username || repliedMsg.FullName}:</strong> {repliedMsg.Content ? (repliedMsg.Content.length > 30 ? repliedMsg.Content.substring(0, 30) + '...' : repliedMsg.Content) : 'Media'}
+                                                                    <strong>{repliedMsg.Nickname || repliedMsg.FullName || repliedMsg.Username}:</strong> {repliedMsg.Content ? (repliedMsg.Content.length > 30 ? repliedMsg.Content.substring(0, 30) + '...' : repliedMsg.Content) : 'Media'}
                                                                 </div>
                                                             );
                                                         }
                                                         return null;
                                                     })()}
-                                                    <div style={{display: 'flex', flexDirection: isMine ? 'row-reverse' : 'row', alignItems: 'center'}}>
+                                                    <div style={{display: 'flex', flexDirection: isMine ? 'row-reverse' : 'row', alignItems: 'center'}} onMouseEnter={() => setHoveredMessageId(msg.Id)} onMouseLeave={() => setHoveredMessageId(null)}>
                                                         <div className="message-bubble">
-                                                            {msg.ImageUrl ? (
+                                                            {msg.IsDeleted ? (
+                                                                <div style={{fontStyle: 'italic', color: 'gray'}}>
+                                                                    Tin nhắn đã bị thu hồi
+                                                                </div>
+                                                            ) : msg.ImageUrl ? (
                                                                 <div>
                                                                     
                                                                     {msg.Content !== 'Sent an image' && msg.Content !== '' && (
@@ -1252,17 +1453,17 @@ const handleMessageChange = (e) => {
                                                                         </div>
                                                                     )}
 
-                                                                    <img src={msg.ImageUrl.startsWith('http') ? msg.ImageUrl : `http://${window.location.hostname}:5000${msg.ImageUrl}`} alt="attachment" className="chat-image" />
+                                                                    <img src={msg.ImageUrl.startsWith('http') ? msg.ImageUrl : `${msg.ImageUrl}`} alt="attachment" className="chat-image" />
                                                                 </div>
                                                             ) : msg.AttachmentUrl ? (
                                                                 <div>
                                                                     {msg.Content && <div style={{marginBottom: '8px'}}>{msg.Content}</div>}
                                                                     {msg.AttachmentUrl.endsWith('.webm') ? (
-                                                                        <audio controls src={msg.AttachmentUrl.startsWith('http') ? msg.AttachmentUrl : `http://${window.location.hostname}:5000${msg.AttachmentUrl}`} style={{maxWidth: '200px'}} />
+                                                                        <audio controls src={msg.AttachmentUrl.startsWith('http') ? msg.AttachmentUrl : `${msg.AttachmentUrl}`} style={{maxWidth: '200px'}} />
                                                                     ) : (
                                                                         <div style={{display: 'flex', alignItems: 'center', background: 'rgba(0,0,0,0.1)', padding: '8px', borderRadius: '8px'}}>
                                                                             <Folder size={20} style={{marginRight: '8px', color: 'var(--primary-color)'}} />
-                                                                            <a href={`http://${window.location.hostname}:5000${msg.AttachmentUrl}`} target="_blank" rel="noopener noreferrer" style={{color: 'var(--primary-color)', textDecoration: 'none'}}>{getText('downloadFile')}</a>
+                                                                            <a href={`${msg.AttachmentUrl}`} target="_blank" rel="noopener noreferrer" style={{color: 'var(--primary-color)', textDecoration: 'none'}}>{getText('downloadFile')}</a>
                                                                         </div>
                                                                     )}
                                                                 </div>
@@ -1270,12 +1471,45 @@ const handleMessageChange = (e) => {
                                                                 msg.Content
                                                             )}
                                                         </div>
-                                                        <div className="message-actions" style={{display: 'flex', gap: '8px', padding: '0 8px'}}>
-                                                            <span style={{cursor: 'pointer', fontSize: '14px'}} onClick={() => setReplyingTo(msg)} title="Reply">↩️</span>
-                                                            <span style={{cursor: 'pointer', fontSize: '14px'}} onClick={() => handleReact(msg.Id, '❤️')} title="Love">❤️</span>
-                                                            <span style={{cursor: 'pointer', fontSize: '14px'}} onClick={() => handleReact(msg.Id, '👍')} title="Like">👍</span>
-                                                            <span style={{cursor: 'pointer', fontSize: '14px'}} onClick={() => handleReact(msg.Id, '😂')} title="Haha">😂</span>
-                                                        </div>
+                                                        {(hoveredMessageId === msg.Id || activeDropdownId === msg.Id || activeReactionBarId === msg.Id) && (
+                                                            <div className="message-actions-group" style={{padding: '0 8px'}}>
+                                                                
+                                                                <button className="message-action-btn" onClick={() => setReplyingTo(msg)} title="Trả lời">
+                                                                    <Reply size={16} />
+                                                                </button>
+                                                                
+                                                                <div style={{position: 'relative'}}>
+                                                                    <button className="message-action-btn" onClick={() => { setActiveReactionBarId(activeReactionBarId === msg.Id ? null : msg.Id); setActiveDropdownId(null); }} title="Thả cảm xúc">
+                                                                        <Smile size={16} />
+                                                                    </button>
+                                                                    {activeReactionBarId === msg.Id && (
+                                                                        <div className="reaction-bar">
+                                                                            <span style={{cursor: 'pointer', fontSize: '20px'}} onClick={() => { handleReact(msg.Id, '❤️'); setActiveReactionBarId(null); }} title="Love">❤️</span>
+                                                                            <span style={{cursor: 'pointer', fontSize: '20px'}} onClick={() => { handleReact(msg.Id, '😆'); setActiveReactionBarId(null); }} title="Haha">😆</span>
+                                                                            <span style={{cursor: 'pointer', fontSize: '20px'}} onClick={() => { handleReact(msg.Id, '😮'); setActiveReactionBarId(null); }} title="Wow">😮</span>
+                                                                            <span style={{cursor: 'pointer', fontSize: '20px'}} onClick={() => { handleReact(msg.Id, '😢'); setActiveReactionBarId(null); }} title="Sad">😢</span>
+                                                                            <span style={{cursor: 'pointer', fontSize: '20px'}} onClick={() => { handleReact(msg.Id, '😡'); setActiveReactionBarId(null); }} title="Angry">😡</span>
+                                                                            <span style={{cursor: 'pointer', fontSize: '20px'}} onClick={() => { handleReact(msg.Id, '👍'); setActiveReactionBarId(null); }} title="Like">👍</span>
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+
+                                                                <div style={{position: 'relative'}}>
+                                                                    <button className="message-action-btn" onClick={() => { setActiveDropdownId(activeDropdownId === msg.Id ? null : msg.Id); setActiveReactionBarId(null); }} title="Thêm">
+                                                                        <MoreVertical size={16} />
+                                                                    </button>
+                                                                    {activeDropdownId === msg.Id && (
+                                                                        <div className="message-dropdown">
+                                                                            {isMine && !msg.IsDeleted && <button className="message-dropdown-item" onClick={() => { handleDeleteMessage(msg.Id, 'everyone'); setActiveDropdownId(null); }}>Thu hồi</button>}
+                                                                            <button className="message-dropdown-item" onClick={() => { handleDeleteMessage(msg.Id, 'me'); setActiveDropdownId(null); }}>Xóa phía tôi</button>
+                                                                            <button className="message-dropdown-item" onClick={() => setActiveDropdownId(null)}>Chuyển tiếp</button>
+                                                                            <button className="message-dropdown-item" onClick={() => setActiveDropdownId(null)}>Ghim</button>
+                                                                            <button className="message-dropdown-item" onClick={() => setActiveDropdownId(null)}>Báo cáo</button>
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        )}
                                                     </div>
                                                     {msg.Reactions && msg.Reactions.length > 0 && (
                                                         <div style={{display: 'flex', gap: '4px', marginTop: '4px', background: 'var(--bg-secondary)', padding: '2px 8px', borderRadius: '12px', fontSize: '12px', border: '1px solid var(--border-color)', alignSelf: isMine ? 'flex-end' : 'flex-start'}}>
@@ -1374,32 +1608,38 @@ const handleMessageChange = (e) => {
                     <aside className="conversation-details-pane">
                         <div className="details-profile" style={{display: 'flex', flexDirection: 'column', alignItems: 'center', paddingTop: '32px'}}>
                             <div className="chat-avatar" style={{width: '72px', height: '72px', margin: '0 auto 12px', background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '50%', color: 'white', position: 'relative'}}>
-                                {selectedFriend.AvatarUrl ? <img src={`http://${window.location.hostname}:5000${selectedFriend.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%'}}/> : <UserIcon size={36} />}
+                                {selectedFriend.AvatarUrl ? <img src={`${selectedFriend.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%'}}/> : <UserIcon size={36} />}
                                 <div className="chat-status-dot" style={{position: 'absolute', bottom: '2px', right: '2px', border: '3px solid var(--bg-color)', background: onlineUsers.has(selectedFriend.Id) ? '#22c55e' : '#94a3b8', width: '16px', height: '16px', borderRadius: '50%'}}></div>
                             </div>
-                            <h3 style={{margin: '0 0 4px', fontSize: '20px', fontWeight: '600', color: 'var(--text-primary)'}}>{selectedFriend.FullName || selectedFriend.Username}</h3>
+                            <h3 style={{margin: '0 0 4px', fontSize: '20px', fontWeight: '600', color: 'var(--text-primary)'}}>{selectedFriend.Nickname || selectedFriend.FullName || selectedFriend.Username}</h3>
                             <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '24px'}}>
                                 <span>{onlineUsers.has(selectedFriend.Id) ? 'Đang hoạt động' : 'Không hoạt động'}</span>
                             </div>
                             
-                            <div className="details-actions-row" style={{display: 'flex', justifyContent: 'center', gap: '32px', marginBottom: '24px'}}>
-                                <div className="details-action-btn" onClick={() => {}} style={{display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer', gap: '8px'}}>
+                            <div className="details-actions-row" style={{display: 'flex', justifyContent: 'center', gap: '16px', marginBottom: '24px'}}>
+                                <div className="details-action-btn" onClick={() => setShowFriendProfileModal(true)} style={{display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer', gap: '8px'}}>
                                     <div style={{width: '36px', height: '36px', borderRadius: '50%', background: 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
                                         <UserIcon size={20} color="var(--text-primary)" />
                                     </div>
                                     <span style={{fontSize: '12px', color: 'var(--text-secondary)'}}>Trang cá nhân</span>
                                 </div>
-                                <div className="details-action-btn" onClick={handleMuteUser} style={{display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer', gap: '8px'}}>
+                                <div className="details-action-btn" onClick={() => { setNickname(selectedFriend.Nickname || ''); setShowNicknameModal(true); }} style={{display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer', gap: '8px'}}>
                                     <div style={{width: '36px', height: '36px', borderRadius: '50%', background: 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
-                                        <BellOff size={20} color="var(--text-primary)" />
+                                        <Edit2 size={20} color="var(--text-primary)" />
                                     </div>
-                                    <span style={{fontSize: '12px', color: 'var(--text-secondary)'}}>Tắt thông báo</span>
+                                    <span style={{fontSize: '12px', color: 'var(--text-secondary)'}}>Biệt danh</span>
                                 </div>
-                                <div className="details-action-btn" onClick={() => {}} style={{display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer', gap: '8px'}}>
-                                    <div style={{width: '36px', height: '36px', borderRadius: '50%', background: 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
-                                        <Search size={20} color="var(--text-primary)" />
+                                <div className="details-action-btn" onClick={handleMuteUser} style={{display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer', gap: '8px'}}>
+                                    <div style={{width: '36px', height: '36px', borderRadius: '50%', background: mutedUsers.includes(selectedFriend.Id) ? 'rgba(239, 68, 68, 0.2)' : 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.3s'}}>
+                                        <BellOff size={20} color={mutedUsers.includes(selectedFriend.Id) ? '#ef4444' : 'var(--text-primary)'} />
                                     </div>
-                                    <span style={{fontSize: '12px', color: 'var(--text-secondary)'}}>Tìm kiếm</span>
+                                    <span style={{fontSize: '12px', color: mutedUsers.includes(selectedFriend.Id) ? '#ef4444' : 'var(--text-secondary)'}}>{mutedUsers.includes(selectedFriend.Id) ? 'Bật thông báo' : 'Tắt thông báo'}</span>
+                                </div>
+                                <div className="details-action-btn" onClick={() => { setShowSearchMessages(!showSearchMessages); if (showSearchMessages) setSearchMessageTerm(''); }} style={{display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer', gap: '8px'}}>
+                                    <div style={{width: '36px', height: '36px', borderRadius: '50%', background: showSearchMessages ? 'rgba(34, 197, 94, 0.2)' : 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.3s'}}>
+                                        <Search size={20} color={showSearchMessages ? '#22c55e' : 'var(--text-primary)'} />
+                                    </div>
+                                    <span style={{fontSize: '12px', color: showSearchMessages ? '#22c55e' : 'var(--text-secondary)'}}>Tìm kiếm</span>
                                 </div>
                             </div>
                         </div>
@@ -1413,9 +1653,79 @@ const handleMessageChange = (e) => {
                                 <span style={{fontWeight: '600', fontSize: '14px', color: 'var(--text-primary)'}}>Tùy chỉnh đoạn chat</span>
                                 <ChevronDown size={20} color="var(--text-secondary)" />
                             </div>
-                            <div className="details-section-header" style={{display: 'flex', justifyContent: 'space-between', padding: '12px 16px', cursor: 'pointer', borderRadius: '8px', margin: '0 8px'}} onMouseOver={e => e.currentTarget.style.background='rgba(255,255,255,0.05)'} onMouseOut={e => e.currentTarget.style.background='transparent'}>
+                            <div className="details-section-header" style={{display: 'flex', justifyContent: 'space-between', padding: '12px 16px', cursor: 'pointer', borderRadius: '8px', margin: '0 8px'}} onMouseOver={e => e.currentTarget.style.background='rgba(255,255,255,0.05)'} onMouseOut={e => e.currentTarget.style.background='transparent'} onClick={() => {
+                                const el = document.getElementById('media-options');
+                                el.style.display = el.style.display === 'none' ? 'block' : 'none';
+                            }}>
                                 <span style={{fontWeight: '600', fontSize: '14px', color: 'var(--text-primary)'}}>File phương tiện, file và liên kết</span>
                                 <ChevronDown size={20} color="var(--text-secondary)" />
+                            </div>
+                            <div id="media-options" style={{display: 'none', padding: '0 8px'}}>
+                                <div className="details-section" style={{marginBottom: 0, borderBottom: 'none'}}>
+                                    <div className="details-section-header">
+                                        <h4>Shared Media</h4>
+                                        <span>{getText("viewAll")} <ChevronRight size={14} /></span>
+                                    </div>
+                                    <div className="shared-media-grid">
+                                        {messages.filter(m => m.ImageUrl).slice(-6).map((m, i) => (
+                                            <div key={i} className="media-item" style={{ overflow: 'hidden', padding: 0 }}>
+                                                <img src={m.ImageUrl.startsWith('http') ? m.ImageUrl : `${m.ImageUrl}`} alt="media" style={{width: '100%', height: '100%', objectFit: 'cover'}} />
+                                            </div>
+                                        ))}
+                                        {messages.filter(m => m.ImageUrl).length === 0 && (
+                                            <p style={{fontSize: '12px', color: 'var(--text-secondary)', gridColumn: 'span 3', textAlign: 'center'}}>No media shared</p>
+                                        )}
+                                    </div>
+                                </div>
+        
+                                <div className="details-section" style={{marginBottom: 0, borderBottom: 'none'}}>
+                                    <div className="details-section-header">
+                                        <h4>Shared Files</h4>
+                                        <span>View all <ChevronRight size={14} /></span>
+                                    </div>
+                                    {messages.filter(m => m.AttachmentUrl && !m.AttachmentUrl.endsWith('.webm')).slice(-3).map((m, i) => (
+                                        <a key={i} href={m.AttachmentUrl.startsWith('http') ? m.AttachmentUrl : `${m.AttachmentUrl}`} target="_blank" rel="noopener noreferrer" style={{textDecoration: 'none', color: 'inherit'}}>
+                                            <div className="shared-file-item">
+                                                <FileText size={20} color="#3b82f6" />
+                                                <div style={{overflow: 'hidden'}}>
+                                                    <h5 style={{whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden'}}>{m.AttachmentUrl.split('-').pop()}</h5>
+                                                    <p>File</p>
+                                                </div>
+                                            </div>
+                                        </a>
+                                    ))}
+                                    {messages.filter(m => m.AttachmentUrl && !m.AttachmentUrl.endsWith('.webm')).length === 0 && (
+                                        <p style={{fontSize: '12px', color: 'var(--text-secondary)', textAlign: 'center'}}>No files shared</p>
+                                    )}
+                                </div>
+        
+                                <div className="details-section" style={{marginBottom: 0, borderBottom: 'none'}}>
+                                    <div className="details-section-header">
+                                        <h4>Shared Links</h4>
+                                        <span>View all <ChevronRight size={14} /></span>
+                                    </div>
+                                    {messages.map(m => {
+                                        const urls = m.Content?.match(/https?:\/\/[^\s]+/g);
+                                        return urls ? urls.map((url, i) => {
+                                            let hostname = url;
+                                            try { hostname = new URL(url).hostname; } catch(e) {}
+                                            return (
+                                                <a key={`${m.Id}-${i}`} href={url} target="_blank" rel="noopener noreferrer" style={{textDecoration: 'none', color: 'inherit'}}>
+                                                    <div className="shared-link-item">
+                                                        <div className="link-icon"><Link size={16} /></div>
+                                                        <div style={{overflow: 'hidden'}}>
+                                                            <h5 style={{whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden'}}>{hostname}</h5>
+                                                            <p style={{whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden'}}>{url}</p>
+                                                        </div>
+                                                    </div>
+                                                </a>
+                                            );
+                                        }) : null;
+                                    }).flat().filter(Boolean).slice(-3)}
+                                    {messages.filter(m => m.Content?.match(/https?:\/\/[^\s]+/g)).length === 0 && (
+                                        <p style={{fontSize: '12px', color: 'var(--text-secondary)', textAlign: 'center'}}>No links shared</p>
+                                    )}
+                                </div>
                             </div>
                             <div className="details-section-header" style={{display: 'flex', justifyContent: 'space-between', padding: '12px 16px', cursor: 'pointer', borderRadius: '8px', margin: '0 8px'}} onMouseOver={e => e.currentTarget.style.background='rgba(255,255,255,0.05)'} onMouseOut={e => e.currentTarget.style.background='transparent'} onClick={() => {
                                 const el = document.getElementById('privacy-options');
@@ -1437,72 +1747,6 @@ const handleMessageChange = (e) => {
                                 </div>
                             </div>
                         </div>
-
-                        <div className="details-section">
-                            <div className="details-section-header">
-                                <h4>Shared Media</h4>
-                                <span>{getText("viewAll")} <ChevronRight size={14} /></span>
-                            </div>
-                            <div className="shared-media-grid">
-                                {messages.filter(m => m.ImageUrl).slice(-6).map((m, i) => (
-                                    <div key={i} className="media-item" style={{ overflow: 'hidden', padding: 0 }}>
-                                        <img src={m.ImageUrl.startsWith('http') ? m.ImageUrl : `http://${window.location.hostname}:5000${m.ImageUrl}`} alt="media" style={{width: '100%', height: '100%', objectFit: 'cover'}} />
-                                    </div>
-                                ))}
-                                {messages.filter(m => m.ImageUrl).length === 0 && (
-                                    <p style={{fontSize: '12px', color: 'var(--text-secondary)', gridColumn: 'span 3', textAlign: 'center'}}>No media shared</p>
-                                )}
-                            </div>
-                        </div>
-
-                        <div className="details-section">
-                            <div className="details-section-header">
-                                <h4>Shared Files</h4>
-                                <span>View all <ChevronRight size={14} /></span>
-                            </div>
-                            {messages.filter(m => m.AttachmentUrl && !m.AttachmentUrl.endsWith('.webm')).slice(-3).map((m, i) => (
-                                <a key={i} href={m.AttachmentUrl.startsWith('http') ? m.AttachmentUrl : `http://${window.location.hostname}:5000${m.AttachmentUrl}`} target="_blank" rel="noopener noreferrer" style={{textDecoration: 'none', color: 'inherit'}}>
-                                    <div className="shared-file-item">
-                                        <FileText size={20} color="#3b82f6" />
-                                        <div style={{overflow: 'hidden'}}>
-                                            <h5 style={{whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden'}}>{m.AttachmentUrl.split('-').pop()}</h5>
-                                            <p>File</p>
-                                        </div>
-                                    </div>
-                                </a>
-                            ))}
-                            {messages.filter(m => m.AttachmentUrl && !m.AttachmentUrl.endsWith('.webm')).length === 0 && (
-                                <p style={{fontSize: '12px', color: 'var(--text-secondary)', textAlign: 'center'}}>No files shared</p>
-                            )}
-                        </div>
-
-                        <div className="details-section">
-                            <div className="details-section-header">
-                                <h4>Shared Links</h4>
-                                <span>View all <ChevronRight size={14} /></span>
-                            </div>
-                            {messages.map(m => {
-                                const urls = m.Content?.match(/https?:\/\/[^\s]+/g);
-                                return urls ? urls.map((url, i) => {
-                                    let hostname = url;
-                                    try { hostname = new URL(url).hostname; } catch(e) {}
-                                    return (
-                                        <a key={`${m.Id}-${i}`} href={url} target="_blank" rel="noopener noreferrer" style={{textDecoration: 'none', color: 'inherit'}}>
-                                            <div className="shared-link-item">
-                                                <div className="link-icon"><Link size={16} /></div>
-                                                <div style={{overflow: 'hidden'}}>
-                                                    <h5 style={{whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden'}}>{hostname}</h5>
-                                                    <p style={{whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden'}}>{url}</p>
-                                                </div>
-                                            </div>
-                                        </a>
-                                    );
-                                }) : null;
-                            }).flat().filter(Boolean).slice(-3)}
-                            {messages.filter(m => m.Content?.match(/https?:\/\/[^\s]+/g)).length === 0 && (
-                                <p style={{fontSize: '12px', color: 'var(--text-secondary)', textAlign: 'center'}}>No links shared</p>
-                            )}
-                        </div>
                     </aside>
                 )}
 
@@ -1511,31 +1755,58 @@ const handleMessageChange = (e) => {
                     <div style={{position: 'fixed', top: '20px', left: '50%', transform: 'translateX(-50%)', background: 'var(--glass-bg)', border: '1px solid var(--glass-border)', padding: '16px 24px', borderRadius: '16px', zIndex: 1000, display: 'flex', alignItems: 'center', gap: '16px', backdropFilter: 'blur(10px)', color: 'white'}}>
                         <div className="chat-avatar" style={{width: '40px', height: '40px', background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '50%'}}><UserIcon size={20}/></div>
                         <div>
-                            <h4 style={{margin: 0}}>{incomingCall.callerName} is calling...</h4>
+                            <h4 style={{margin: 0}}>{incomingCall.callerName} is {incomingCall.isVideo ? 'video calling' : 'audio calling'}...</h4>
                         </div>
                         <div style={{display: 'flex', gap: '8px'}}>
                             <button style={{background: '#22c55e', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer'}} onClick={acceptCall}>Accept</button>
-                            <button style={{background: '#ef4444', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer'}} onClick={() => { setIncomingCall(null); if(incomingCall.call) incomingCall.call.close(); }}>Decline</button>
+                            <button style={{background: '#ef4444', color: 'white', border: 'none', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer'}} onClick={() => { 
+                                if(incomingCall && incomingCall.call) {
+                                    socket.emit('rejectCall', { receiverId: incomingCall.call.peer });
+                                    incomingCall.call.close(); 
+                                }
+                                setIncomingCall(null); 
+                            }}>Decline</button>
                         </div>
                     </div>
                 )}
                 
                 {callActive && (
                     <div style={{position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', background: 'var(--glass-bg)', border: '1px solid var(--glass-border)', padding: '24px', borderRadius: '16px', zIndex: 1000, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px', backdropFilter: 'blur(10px)', color: 'white', minWidth: '400px'}}>
-                        <h3>Video Call</h3>
-                        <div style={{display: 'flex', gap: '16px', width: '100%', justifyContent: 'center'}}>
-                            <div style={{position: 'relative', width: '150px', height: '150px', background: 'black', borderRadius: '8px', overflow: 'hidden'}}>
-                                <video playsInline muted ref={myVideoRef} autoPlay style={{width: '100%', height: '100%', objectFit: 'cover'}} />
-                                <div style={{position: 'absolute', bottom: 4, left: 4, fontSize: '12px', background: 'rgba(0,0,0,0.5)', padding: '2px 4px', borderRadius: '4px'}}>You</div>
+                        <h3>{callIsVideo ? getText('videoCall') : getText('audioCall')}</h3>
+                        
+                        {callIsVideo ? (
+                            <div style={{display: 'flex', gap: '16px', width: '100%', justifyContent: 'center'}}>
+                                <div style={{position: 'relative', width: '150px', height: '150px', background: 'black', borderRadius: '8px', overflow: 'hidden'}}>
+                                    <video playsInline muted ref={myVideoRef} autoPlay style={{width: '100%', height: '100%', objectFit: 'cover'}} />
+                                    <div style={{position: 'absolute', bottom: 4, left: 4, fontSize: '12px', background: 'rgba(0,0,0,0.5)', padding: '2px 4px', borderRadius: '4px'}}>{getText('you')}</div>
+                                </div>
+                                <div style={{position: 'relative', width: '200px', height: '150px', background: 'black', borderRadius: '8px', overflow: 'hidden'}}>
+                                    {remoteStream ? (
+                                        <video playsInline ref={remoteVideoRef} autoPlay style={{width: '100%', height: '100%', objectFit: 'cover'}} />
+                                    ) : (
+                                        <div style={{display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%'}}>Connecting...</div>
+                                    )}
+                                </div>
                             </div>
-                            <div style={{position: 'relative', width: '200px', height: '150px', background: 'black', borderRadius: '8px', overflow: 'hidden'}}>
-                                {remoteStream ? (
-                                    <video playsInline ref={remoteVideoRef} autoPlay style={{width: '100%', height: '100%', objectFit: 'cover'}} />
-                                ) : (
-                                    <div style={{display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%'}}>Connecting...</div>
-                                )}
+                        ) : (
+                            <div style={{display: 'flex', gap: '32px', width: '100%', justifyContent: 'center', alignItems: 'center', margin: '20px 0'}}>
+                                <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px'}}>
+                                    <div style={{width: '80px', height: '80px', borderRadius: '50%', background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+                                        <UserIcon size={40} />
+                                    </div>
+                                    <span>{getText('you')}</span>
+                                    <video playsInline muted ref={myVideoRef} autoPlay style={{position: 'absolute', width: 0, height: 0, opacity: 0, pointerEvents: 'none'}} />
+                                </div>
+                                
+                                <div style={{display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px'}}>
+                                    <div style={{width: '80px', height: '80px', borderRadius: '50%', background: '#4b5563', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+                                        {remoteStream ? <UserIcon size={40} /> : <div style={{fontSize: '14px'}}>...</div>}
+                                    </div>
+                                    <span>{selectedFriend?.Username || 'Friend'}</span>
+                                    {remoteStream && <video playsInline ref={remoteVideoRef} autoPlay style={{position: 'absolute', width: 0, height: 0, opacity: 0, pointerEvents: 'none'}} />}
+                                </div>
                             </div>
-                        </div>
+                        )}
                         <button style={{background: '#ef4444', color: 'white', border: 'none', padding: '12px 24px', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold'}} onClick={endCall}>End Call</button>
                     </div>
                 )}
@@ -1706,9 +1977,9 @@ const handleMessageChange = (e) => {
                                             <div key={blocked.Id} style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px', background: 'rgba(255,255,255,0.05)', borderRadius: '12px'}}>
                                                 <div style={{display: 'flex', alignItems: 'center', gap: '12px'}}>
                                                     <div style={{width: '40px', height: '40px', borderRadius: '50%', background: 'var(--glass-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden'}}>
-                                                        {blocked.AvatarUrl ? <img src={`http://${window.location.hostname}:5000${blocked.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : <UserIcon size={20} />}
+                                                        {blocked.AvatarUrl ? <img src={`${blocked.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : <UserIcon size={20} />}
                                                     </div>
-                                                    <span style={{fontSize: '15px', fontWeight: '500'}}>{blocked.FullName || blocked.Username}</span>
+                                                    <span style={{fontSize: '15px', fontWeight: '500'}}>{blocked.Nickname || blocked.FullName || blocked.Username}</span>
                                                 </div>
                                                 <button onClick={() => unblockUser(blocked.Id)} style={{background: 'rgba(255,255,255,0.1)', border: '1px solid var(--glass-border)', borderRadius: '8px', padding: '6px 16px', cursor: 'pointer', color: 'var(--text-primary)', fontSize: '13px', transition: 'all 0.2s'}}>
                                                     Bỏ chặn
@@ -1718,6 +1989,72 @@ const handleMessageChange = (e) => {
                                     </div>
                                 );
                             })()}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Friend Profile Modal */}
+            {showFriendProfileModal && selectedFriend && (
+                <div className="modal-overlay" onClick={() => setShowFriendProfileModal(false)} style={{position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+                    <div className="modal-content settings-modal-content" onClick={e => e.stopPropagation()} style={{padding: '32px', textAlign: 'center', maxWidth: '400px', width: '90%', background: 'var(--glass-bg)', borderRadius: '24px', border: '1px solid var(--glass-border)', boxShadow: '0 8px 32px rgba(0,0,0,0.2)'}}>
+                        <div style={{display: 'flex', justifyContent: 'flex-end'}}>
+                            <button onClick={() => setShowFriendProfileModal(false)} style={{background: 'rgba(255,255,255,0.1)', border: 'none', width: '32px', height: '32px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-primary)', cursor: 'pointer'}}>
+                                <X size={20} />
+                            </button>
+                        </div>
+                        <div style={{width: '96px', height: '96px', margin: '0 auto 16px', background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '50%', color: 'white', overflow: 'hidden'}}>
+                            {selectedFriend.AvatarUrl ? <img src={`${selectedFriend.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : <UserIcon size={48} />}
+                        </div>
+                        <h2 style={{margin: '0 0 8px', fontSize: '24px', fontWeight: 'bold'}}>{selectedFriend.Nickname || selectedFriend.FullName || selectedFriend.Username}</h2>
+                        <p style={{margin: '0 0 24px', color: 'var(--text-secondary)', fontSize: '15px'}}>{selectedFriend.Bio || 'Chưa có tiểu sử.'}</p>
+                        
+                        <div style={{background: 'rgba(255,255,255,0.05)', borderRadius: '12px', padding: '16px', textAlign: 'left'}}>
+                            <div style={{marginBottom: '12px'}}>
+                                <div style={{fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '4px'}}>Username</div>
+                                <div style={{fontSize: '15px', fontWeight: '500'}}>{selectedFriend.Username}</div>
+                            </div>
+                            {selectedFriend.Email && (
+                                <div style={{marginBottom: '12px'}}>
+                                    <div style={{fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '4px'}}>Email</div>
+                                    <div style={{fontSize: '15px', fontWeight: '500'}}>{selectedFriend.Email}</div>
+                                </div>
+                            )}
+                            {selectedFriend.DateOfBirth && (
+                                <div>
+                                    <div style={{fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '4px'}}>Ngày sinh</div>
+                                    <div style={{fontSize: '15px', fontWeight: '500'}}>{new Date(selectedFriend.DateOfBirth).toLocaleDateString()}</div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Nickname Modal */}
+            {showNicknameModal && selectedFriend && (
+                <div className="modal-overlay" onClick={() => setShowNicknameModal(false)} style={{position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+                    <div className="modal-content settings-modal-content" onClick={e => e.stopPropagation()} style={{padding: '32px', textAlign: 'center', maxWidth: '400px', width: '90%', background: 'var(--glass-bg)', borderRadius: '24px', border: '1px solid var(--glass-border)', boxShadow: '0 8px 32px rgba(0,0,0,0.2)'}}>
+                        <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px'}}>
+                            <h2 style={{margin: 0, fontSize: '18px', fontWeight: 'bold'}}>Đặt biệt danh</h2>
+                            <button onClick={() => setShowNicknameModal(false)} style={{background: 'rgba(255,255,255,0.1)', border: 'none', width: '32px', height: '32px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-primary)', cursor: 'pointer'}}>
+                                <X size={20} />
+                            </button>
+                        </div>
+                        <div style={{textAlign: 'left', marginBottom: '24px'}}>
+                            <p style={{fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '16px'}}>Tên này sẽ chỉ hiển thị với bạn. Bạn có thể thay đổi hoặc xóa nó bất cứ lúc nào.</p>
+                            <input 
+                                type="text"
+                                value={nickname}
+                                onChange={e => setNickname(e.target.value)}
+                                placeholder={selectedFriend.FullName || selectedFriend.Username}
+                                style={{width: '100%', padding: '12px 16px', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--glass-border)', borderRadius: '12px', color: 'var(--text-primary)', fontSize: '15px', outline: 'none'}}
+                                autoFocus
+                            />
+                        </div>
+                        <div style={{display: 'flex', gap: '12px', justifyContent: 'flex-end'}}>
+                            <button onClick={() => setShowNicknameModal(false)} style={{padding: '10px 20px', borderRadius: '12px', border: 'none', background: 'rgba(255,255,255,0.1)', color: 'var(--text-primary)', cursor: 'pointer', fontWeight: '500'}}>Hủy</button>
+                            <button onClick={handleSetNickname} style={{padding: '10px 20px', borderRadius: '12px', border: 'none', background: 'var(--primary-color)', color: 'white', cursor: 'pointer', fontWeight: '500'}}>Lưu</button>
                         </div>
                     </div>
                 </div>
@@ -1786,7 +2123,7 @@ const handleMessageChange = (e) => {
                                 <h3 className="settings-section-title">Tài khoản</h3>
                                 <div className="settings-account-info" onClick={() => setShowAccountDetails(!showAccountDetails)} style={{display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 0', cursor: 'pointer'}}>
                                     <div style={{width: '40px', height: '40px', borderRadius: '50%', overflow: 'hidden', background: 'var(--primary-color)', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
-                                        {user.AvatarUrl ? <img src={`http://${window.location.hostname}:5000${user.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : <UserIcon size={24} color="white"/>}
+                                        {user.AvatarUrl ? <img src={`${user.AvatarUrl}`} alt="Avatar" style={{width: '100%', height: '100%', objectFit: 'cover'}}/> : <UserIcon size={24} color="white"/>}
                                     </div>
                                     <div style={{flex: 1}}>
                                         <div style={{fontWeight: 'bold', fontSize: '16px'}}>{user.FullName || user.Username}</div>

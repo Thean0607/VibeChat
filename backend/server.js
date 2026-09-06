@@ -47,9 +47,9 @@ const peerHttpServer = http.createServer(peerApp);
 const { ExpressPeerServer } = require('peer');
 const peerServer = ExpressPeerServer(peerHttpServer, {
     debug: true,
-    path: '/myapp'
+    path: '/peerjs/myapp'
 });
-peerApp.use('/peerjs', peerServer);
+peerApp.use('/', peerServer);
 peerHttpServer.listen(5001, () => {
     console.log('PeerJS server running on port 5001');
 });
@@ -135,6 +135,8 @@ async function initDb() {
                     IsRead BIT DEFAULT 0,
                     ReadAt DATETIME NULL,
                     IsDeleted BIT DEFAULT 0,
+                    DeletedBySender BIT DEFAULT 0,
+                    DeletedByReceiver BIT DEFAULT 0,
                     CreatedAt DATETIME DEFAULT GETDATE(),
                     UpdatedAt DATETIME DEFAULT GETDATE(),
                     CONSTRAINT FK_Messages_Sender FOREIGN KEY (SenderId) REFERENCES Users(Id) ON DELETE CASCADE,
@@ -162,6 +164,10 @@ async function initDb() {
                     ALTER TABLE Messages ADD IsEdited BIT DEFAULT 0;
                 IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[Messages]') AND name = 'IsRead')
                     ALTER TABLE Messages ADD IsRead BIT DEFAULT 0;
+                IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[Messages]') AND name = 'DeletedBySender')
+                    ALTER TABLE Messages ADD DeletedBySender BIT DEFAULT 0;
+                IF NOT EXISTS (SELECT * FROM sys.columns WHERE object_id = OBJECT_ID(N'[dbo].[Messages]') AND name = 'DeletedByReceiver')
+                    ALTER TABLE Messages ADD DeletedByReceiver BIT DEFAULT 0;
             END
         `);
         
@@ -791,6 +797,34 @@ app.post('/api/friends/accept', authenticateToken, async (req, res) => {
         res.status(500).json({ error: 'Server error' });
     }
 });
+app.post('/api/friends/nickname', authenticateToken, async (req, res) => {
+    const { friendId, nickname } = req.body;
+    const userId = req.user.id;
+    try {
+        const pool = await poolPromise;
+        if (nickname && nickname.trim() !== '') {
+            await pool.request()
+                .input('userId', sql.Int, userId)
+                .input('friendId', sql.Int, friendId)
+                .input('nickname', sql.NVarChar, nickname.trim())
+                .query(`
+                    IF EXISTS (SELECT * FROM FriendNicknames WHERE UserId = @userId AND FriendId = @friendId)
+                        UPDATE FriendNicknames SET Nickname = @nickname WHERE UserId = @userId AND FriendId = @friendId
+                    ELSE
+                        INSERT INTO FriendNicknames (UserId, FriendId, Nickname) VALUES (@userId, @friendId, @nickname)
+                `);
+        } else {
+            await pool.request()
+                .input('userId', sql.Int, userId)
+                .input('friendId', sql.Int, friendId)
+                .query(`DELETE FROM FriendNicknames WHERE UserId = @userId AND FriendId = @friendId`);
+        }
+        res.json({ success: true });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
 
 app.get('/api/friends/:userId', authenticateToken, async (req, res) => {
     const { userId } = req.params;
@@ -800,10 +834,12 @@ app.get('/api/friends/:userId', authenticateToken, async (req, res) => {
             .input('userId', sql.Int, userId)
             .query(`
                 SELECT u.Id, u.Username, u.FullName, u.AvatarUrl, f.Status, f.RequesterId, f.AddresseeId,
-                       CASE WHEN a.Id IS NOT NULL THEN 1 ELSE 0 END as IsArchived
+                       CASE WHEN a.Id IS NOT NULL THEN 1 ELSE 0 END as IsArchived,
+                       n.Nickname
                 FROM Friendships f
                 JOIN Users u ON (u.Id = f.RequesterId OR u.Id = f.AddresseeId) AND u.Id != @userId
                 LEFT JOIN ArchivedChats a ON a.UserId = @userId AND a.FriendId = u.Id
+                LEFT JOIN FriendNicknames n ON n.UserId = @userId AND n.FriendId = u.Id
                 WHERE (f.RequesterId = @userId OR f.AddresseeId = @userId)
             `);
         res.json(result.recordset);
@@ -994,6 +1030,27 @@ io.on('connection', (socket) => {
         }
     });
 
+    socket.on('rejectCall', (data) => {
+        const { receiverId } = data; // this is the caller's ID
+        if (receiverId) {
+            const receiverSocketId = onlineUsers.get(receiverId);
+            if (receiverSocketId) {
+                io.to(receiverSocketId).emit('callRejected');
+            }
+        }
+    });
+
+    socket.on('endCall', (data) => {
+        const { receiverId } = data;
+        if (receiverId) {
+            const receiverSocketId = onlineUsers.get(receiverId);
+            if (receiverSocketId) {
+                io.to(receiverSocketId).emit('callEnded');
+            }
+        }
+    });
+
+
     socket.on('disconnect', () => {
         console.log('User disconnected:', socket.id);
         if (socket.user) {
@@ -1052,6 +1109,64 @@ app.post('/api/messages/:id/react', authenticateToken, async (req, res) => {
         res.json({ success: true });
     } catch (err) {
         console.error('Error reacting to message:', err);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
+// Delete or recall a message
+app.delete('/api/messages/:id', authenticateToken, async (req, res) => {
+    try {
+        const messageId = req.params.id;
+        const { type } = req.query; // 'everyone' or 'me'
+        const userId = req.user.id;
+        
+        const pool = await poolPromise;
+        const msgResult = await pool.request()
+            .input('Id', sql.Int, messageId)
+            .query('SELECT SenderId, ReceiverId, IsDeleted FROM Messages WHERE Id = @Id');
+            
+        if (msgResult.recordset.length === 0) {
+            return res.status(404).json({ error: 'Message not found' });
+        }
+        
+        const msg = msgResult.recordset[0];
+        const isSender = msg.SenderId == userId;
+        const isReceiver = msg.ReceiverId == userId;
+        
+        if (!isSender && !isReceiver) {
+            return res.status(403).json({ error: 'Not authorized' });
+        }
+
+        if (type === 'everyone') {
+            if (!isSender) {
+                return res.status(403).json({ error: 'Only sender can recall for everyone' });
+            }
+            await pool.request()
+                .input('Id', sql.Int, messageId)
+                .query('UPDATE Messages SET IsDeleted = 1 WHERE Id = @Id');
+                
+            const receiverSocketId = onlineUsers.get(msg.ReceiverId);
+            if (receiverSocketId) {
+                io.to(receiverSocketId).emit('messageDeleted', { messageId, type });
+            }
+        } else if (type === 'me') {
+            if (isSender) {
+                await pool.request()
+                    .input('Id', sql.Int, messageId)
+                    .query('UPDATE Messages SET DeletedBySender = 1 WHERE Id = @Id');
+            } else if (isReceiver) {
+                await pool.request()
+                    .input('Id', sql.Int, messageId)
+                    .query('UPDATE Messages SET DeletedByReceiver = 1 WHERE Id = @Id');
+            }
+            // we don't need to notify the other user for 'me' deletes
+        } else {
+            return res.status(400).json({ error: 'Invalid type' });
+        }
+        
+        res.json({ success: true, messageId, type });
+    } catch (err) {
+        console.error('Error deleting message:', err);
         res.status(500).json({ error: 'Internal server error' });
     }
 });
@@ -1148,12 +1263,16 @@ app.get('/api/messages', authenticateToken, async (req, res) => {
                        JOIN Users u2 ON r.UserId = u2.Id
                        WHERE r.MessageId = m.Id
                        FOR JSON PATH
-                   ) as Reactions
+                   ) as Reactions,
+                   m.IsDeleted
             FROM Messages m
             JOIN Users u ON m.SenderId = u.Id
-            WHERE 1=1
+            WHERE ((m.SenderId = @reqUser AND m.DeletedBySender = 0) 
+                OR (m.ReceiverId = @reqUser AND m.DeletedByReceiver = 0))
         `;
         
+        request.input('reqUser', sql.Int, req.user.id);
+
         if (user1 && user2) {
             query += ` AND ((m.SenderId = @user1 AND m.ReceiverId = @user2) 
                           OR (m.SenderId = @user2 AND m.ReceiverId = @user1)) `;

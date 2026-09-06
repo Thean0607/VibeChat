@@ -1,7 +1,8 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
 :root {
-  --bg-color: #e5e7eb; /* Light grey background */
+  --bg-color: #f0f2f5;
+  --bg-main: #ffffff;
   --glass-bg: rgba(255, 255, 255, 0.9);
   --glass-border: rgba(0, 0, 0, 0.05);
   --primary-color: #6366f1; /* Soft indigo/blue */
@@ -10,10 +11,16 @@
   --text-secondary: #94a3b8; /* Slate 400 */
   --message-mine: #6366f1;
   --message-other: #ffffff;
+  --input-bg: #ffffff;
+  --input-border: #e2e8f0;
+  --element-bg: rgba(0, 0, 0, 0.04);
+  --element-hover-bg: rgba(0, 0, 0, 0.08);
+  --element-active-bg: rgba(0, 0, 0, 0.12);
 }
 
 .dark-theme {
-  --bg-color: #18191a; /* Messenger background */
+  --bg-color: #18191a;
+  --bg-main: #242526;
   --glass-bg: #242526; /* Messenger panel bg */
   --glass-border: rgba(255, 255, 255, 0.1);
   --primary-color: #0084ff; /* Messenger blue */
@@ -22,6 +29,11 @@
   --text-secondary: #b0b3b8;
   --message-mine: #0084ff;
   --message-other: #3e4042;
+  --input-bg: #3a3b3c;
+  --input-border: #4e4f50;
+  --element-bg: rgba(255, 255, 255, 0.05);
+  --element-hover-bg: rgba(255, 255, 255, 0.1);
+  --element-active-bg: rgba(255, 255, 255, 0.15);
 }
 
 * {
@@ -107,8 +119,8 @@ code {
 /* Inputs */
 .input-field {
   width: 100%;
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
   color: var(--text-primary);
   padding: 14px 16px;
   border-radius: 12px;
